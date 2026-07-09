@@ -23,17 +23,18 @@ defaultJointState
   (10,0) -0.05     ; right_ankle_pitch_joint
   (11,0)  0.0      ; right_ankle_roll_joint
   (12,0)  0.0      ; waist_yaw_joint
-  (13,0)  0.0      ; waist_roll_joint
-  (14,0)  0.0      ; waist_pitch_joint
-  (15,0)  0.0      ; left_shoulder_pitch_joint
-  (16,0)  0.0      ; left_shoulder_roll_joint
-  (17,0)  0.0      ; left_shoulder_yaw_joint
-  (18,0)  0.0      ; left_elbow_joint
-  (19,0)  0.0      ; right_shoulder_pitch_joint
-  (20,0)  0.0      ; right_shoulder_roll_joint
-  (21,0)  0.0      ; right_shoulder_yaw_joint
-  (22,0)  0.0      ; right_elbow
-} 
+  (13,0)  0.0      ; left_shoulder_pitch_joint
+  (14,0)  0.0      ; left_shoulder_roll_joint
+  (15,0)  0.0      ; left_shoulder_yaw_joint
+  (16,0)  0.0      ; left_elbow_joint
+  (17,0)  0.0      ; left_wrist_roll_joint
+  (18,0)  0.0      ; right_shoulder_pitch_joint
+  (19,0)  0.0      ; right_shoulder_roll_joint
+  (20,0)  0.0      ; right_shoulder_yaw_joint
+  (21,0)  0.0      ; right_elbow_joint
+  (22,0)  0.0      ; right_wrist_roll_joint
+
+}
 
 initialModeSchedule
 {

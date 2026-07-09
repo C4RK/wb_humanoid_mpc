@@ -6,12 +6,12 @@ if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif ()
 
 # Generate compile_commands.json for clang tools
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)#自动生成.json文件
 
 find_package(ament_cmake REQUIRED)
 find_package(ament_index_cpp REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(humanoid_centroidal_mpc_ros2 REQUIRED)
+find_package(rclcpp REQUIRED)#ROS2的c++核心通信库
+find_package(humanoid_centroidal_mpc_ros2 REQUIRED)#自己写的ROS2封装包，用来处理OCS2框架与ROS2之间的数据转换
 
 find_package(GTest REQUIRED)
 
@@ -23,20 +23,20 @@ find_package(Boost REQUIRED COMPONENTS
 )
 
 # find_package(PkgConfig REQUIRED)
-pkg_check_modules(pinocchio REQUIRED pinocchio)
+pkg_check_modules(pinocchio REQUIRED pinocchio)#刚体动力学的开源库
 
-find_package(Eigen3 3.3 REQUIRED NO_MODULE)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)#C++线性代数库
 
 
 ###########
 ## Build ##
 ###########
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 20)#使用c++20进行编译
 
 set(FLAGS ${OCS2_CXX_FLAGS} -Wno-invalid-partial-specialization)
 
-include_directories(
+include_directories(#把外部库的头文件路径打包告诉编译器
   include
   ${EIGEN3_INCLUDE_DIRS}
   ${pinocchio_INCLUDE_DIRS}
@@ -57,7 +57,7 @@ set(dependencies
   rclcpp
   humanoid_centroidal_mpc_ros2
 )
-
+#生成可执行文件test_pinocchio_model，读取/testPinocchioModel.cpp
 add_executable(test_pinocchio_model
   test/testPinocchioModel.cpp
 )

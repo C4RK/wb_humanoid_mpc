@@ -14,5 +14,5 @@
 
   <export>
     <build_type>ament_cmake</build_type>
-  </export>
+  </export>#导出告诉ros2的colcon，这个是ament_cmake类型的c++编译包
 </package>

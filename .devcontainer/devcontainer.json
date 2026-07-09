@@ -56,13 +56,16 @@
         "ms-vscode-remote.remote-ssh",
         "ms-vscode-remote.remote-ssh-edit",
         "ms-vscode.remote-explorer",
-        "sankethdev.vscode-proto"
+        "sankethdev.vscode-proto",
+        "anthropic.claude-code"//change
       ]
     }
   },
   "mounts": [
     "source=${localWorkspaceFolder}/../..,target=/wb_humanoid_mpc_ws,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind"
+    "source=${localEnv:HOME}/.gitconfig,target=/home/vscode/.gitconfig,type=bind",
+    "source=wb-mpc-claude-history,target=/home/vscode/.config,type=volume",//change
+    "source=${localEnv:HOME}/.claude,target=/home/vscode/.claude,type=bind"
   ],
   "postCreateCommand": "git config --global user.name \"$GIT_USER_NAME\" && git config --global user.email \"$GIT_USER_EMAIL\" && git config --global --add safe.directory /wb_humanoid_mpc_ws/src/wb_humanoid_mpc && curl -o .git-completion.bash https://raw.githubusercontent.com/git/git/master/contrib/completion/git-completion.bash && echo 'source /opt/ros/jazzy/setup.bash' >> ~/.bashrc && echo 'source ./.git-completion.bash' >> ~/.bashrc"
 }
