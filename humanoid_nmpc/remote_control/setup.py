@@ -25,6 +25,7 @@ setup(
             "base_velocity_controller_gui = remote_control.base_velocity_controller_gui:main",
             "xbox_velocity_publisher = remote_control.xbox_walking_command_publisher:main",
             "em_tracker_node = remote_control.em_tracker_node:main",
+            "calibration_node = remote_control.calibration_node:main",
         ],
     },
 )
