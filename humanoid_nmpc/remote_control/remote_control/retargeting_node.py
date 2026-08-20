@@ -82,20 +82,19 @@ DEFAULT_JOINT_STATE = [
 ]  # 21 elements total
 
 # Joint limits [min_rad, max_rad] for the left arm.
-# Source: Unitree G1 hardware specification.
-# Verify these if the robot reaches hard stops during experiments.
+# Source: g1_23dof.urdf — use URDF values, not estimates.
 JOINT_LIMITS = {
-    'left_shoulder_pitch_joint': (-3.14,  3.14),
-    'left_shoulder_roll_joint':  (-0.34,  2.53),
-    'left_shoulder_yaw_joint':   (-1.30,  4.00),
-    'left_elbow_joint':          (-1.25,  2.00),
+    'left_shoulder_pitch_joint': (-3.0892, 2.6704),
+    'left_shoulder_roll_joint':  (-1.5882, 2.2515),
+    'left_shoulder_yaw_joint':   (-2.618,  2.618),
+    'left_elbow_joint':          (-1.0472, 2.0944),
 }
 
 # The forearm bone direction in the RECEIVER's local frame.
 # When the forearm points "straight along its own axis", this local vector
 # describes that direction. Default: local +Z axis.
 # If the retargeting looks wrong (elbow goes opposite direction), try [0,0,-1].
-FOREARM_LOCAL_AXIS = np.array([0.0, 0.0, 1.0])
+FOREARM_LOCAL_AXIS = np.array([0.0, 1.0, 0.0])  # confirmed from WMET sensor mounting test
 
 
 # ---------------------------------------------------------------------------
@@ -211,22 +210,27 @@ class RetargetingNode(Node):
         # ----------------------------------------------------------------
         # Step 3 — Shoulder pitch and roll from elbow direction
         #
-        # Decompose E_hat into two angles using spherical coordinates.
-        # In the shoulder frame with the transmitter axes (x=forward, y=left, z=up):
+        # Robot zero configuration (from g1_23dof.urdf, all joints = 0):
+        #   upper arm hangs straight DOWN, forearm points FORWARD.
+        # This means shoulder_pitch = 0 when arm hangs down.
         #
-        #   shoulder_pitch (Y-axis rotation): arm swings forward/backward
-        #     pitch = atan2(-E_hat.z, E_hat.x)
-        #     positive pitch → arm raises forward
+        #   shoulder_pitch (Y-axis rotation):
+        #     pitch = atan2(-E_hat.x, -E_hat.z)
+        #     0      → arm hangs straight down
+        #     -π/2   → arm raised forward horizontal
+        #     +π/2   → arm swings backward
+        #     Confirmed from g1_23dof.urdf URDF preview: positive pitch = arm backward.
         #
         #   shoulder_roll (X-axis rotation): arm swings outward/inward
         #     roll = asin(E_hat.y)
-        #     positive roll → arm raises sideways (outward for left arm)
+        #     0      → arm at side (no sideways movement)
+        #     +π/2   → arm raised fully sideways (abduction)
         #
         # This is an approximation: the joints are sequential (pitch then roll),
         # so the decomposition is not exact for large angles. For accurate full-range
         # tracking, replace with Pinocchio numerical IK.
         # ----------------------------------------------------------------
-        shoulder_pitch = math.atan2(-E_hat[2], E_hat[0])
+        shoulder_pitch = math.atan2(-E_hat[0], -E_hat[2])
         shoulder_roll  = math.asin(float(np.clip(E_hat[1], -1.0, 1.0)))
 
         # ----------------------------------------------------------------
@@ -235,22 +239,25 @@ class RetargetingNode(Node):
         # Triangle: S (shoulder) — E (elbow) — W (wrist)
         # Sides: |SE| = L1, |EW| = L2, |SW| = d_sw
         #
-        # Law of cosines:
-        #   d_sw² = L1² + L2² - 2·L1·L2·cos(π - θ_elbow)
-        #   → cos(π - θ_elbow) = (L1² + L2² - d_sw²) / (2·L1·L2)
-        #   → θ_elbow = π - acos(...)   where θ_elbow=0 means arm fully extended
+        # Law of cosines gives cos_val = (L1²+L2²-d_sw²) / (2·L1·L2)
         #
-        # Robot convention: elbow_joint = 0 when arm straight, positive when bent.
+        # Robot elbow joint (axis = Y, from g1_23dof.urdf):
+        #   0°   = forearm pointing forward (+X)  — robot default
+        #  +90°  = forearm pointing downward (-Z) — arm fully extended
+        #  -60°  = forearm pointing upward  (+Z)  — arm folded (lower limit)
+        #
+        # Derived from URDF preview (confirmed visually):
+        #   robot_elbow = acos(cos_val) - π/2
+        #
+        # Verification:
+        #   arm straight (d_sw = L1+L2): cos_val=-1 → acos(π)-π/2 = π/2  ≈ +1.571 ✓
+        #   arm 90° bent              : cos_val= 0 → acos(π/2)-π/2 = 0    ✓
+        #   arm 150° bent             : cos_val=√3/2→ acos(π/6)-π/2 = -π/3 ≈ -1.047 ✓
         # ----------------------------------------------------------------
         d_sw = np.linalg.norm(W)
         d_sw_safe = float(np.clip(d_sw, abs(self.L1 - self.L2) + 1e-6, self.L1 + self.L2))
-        cos_val   = (self.L1**2 + self.L2**2 - d_sw_safe**2) / (2 * self.L1 * self.L2)
-        # elbow angle: 0 = straight, increases as arm bends
-        elbow = math.pi - math.acos(float(np.clip(cos_val, -1.0, 1.0)))
-
-        # Scale from human range [0, π] to robot range [0, elbow_max]
-        robot_elbow_max = JOINT_LIMITS['left_elbow_joint'][1]
-        elbow_scaled = elbow * (robot_elbow_max / math.pi)
+        cos_val      = (self.L1**2 + self.L2**2 - d_sw_safe**2) / (2 * self.L1 * self.L2)
+        elbow_scaled = math.acos(float(np.clip(cos_val, -1.0, 1.0))) - math.pi / 2
 
         # ----------------------------------------------------------------
         # Step 5 — Shoulder yaw (upper arm axial twist)

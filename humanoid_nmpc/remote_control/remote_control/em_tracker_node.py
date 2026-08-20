@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import math
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
@@ -117,6 +118,13 @@ class EmTrackerNode(Node):
         msg.pose.orientation.z = q[3]
 
         self.pose_publisher.publish(msg)
+
+        # Print position and distance in centimeters to terminal for live monitoring
+        x = msg.pose.position.x * 100.0
+        y = msg.pose.position.y * 100.0
+        z = msg.pose.position.z * 100.0
+        dist_cm = math.sqrt(x**2 + y**2 + z**2)
+        print(f"x={x:7.2f}cm  y={y:7.2f}cm  z={z:7.2f}cm  |  dist={dist_cm:.2f}cm", end='\r')
 
     # ------------------------------------------------------------------
 
