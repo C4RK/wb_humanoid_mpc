@@ -30,6 +30,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <ocs2_sqp/SqpMpc.h>
 #include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/joint_state.hpp>
 
 #include <humanoid_centroidal_mpc/CentroidalMpcInterface.h>
 #include <mujoco_sim_interface/MujocoSimInterface.h>
@@ -95,6 +96,24 @@ int main(int argc, char** argv) {
 
   //让运动管理器订阅ROS2的手柄/键盘速度输入话题
   ros2ProceduralMpcMotionManager->subscribe(nodeHandle, qos);
+
+  // EM tracker arm joint subscriber
+  // Receives 21-element joint state from retargeting_node and forwards to MPC.
+  // rclcpp::spin_some(nodeHandle) in the main loop processes this at 500 Hz.
+  auto emArmSub = nodeHandle->create_subscription<sensor_msgs::msg::JointState>(
+      "/arm_joint_target",
+      rclcpp::QoS(1).best_effort(),
+      [&mpcTargetTrajectoriesCalculator](const sensor_msgs::msg::JointState::SharedPtr msg) {
+        if (msg->position.size() >= 21) {
+          vector_t q(msg->position.size());
+          for (size_t i = 0; i < msg->position.size(); i++) {
+            q[i] = msg->position[i];
+          }
+          mpcTargetTrajectoriesCalculator.setTargetJointState(q);
+        }
+      });
+  std::cout << "EM arm tracking subscriber ready on /arm_joint_target" << std::endl;
+
   //将参考管理器和运动管理器注入到MPC求解器的内部。
   //确保求解器在计算每一步时，知道最新的步态和目标速度
   mpc.getSolverPtr()->setReferenceManager(interface.getReferenceManagerPtr());

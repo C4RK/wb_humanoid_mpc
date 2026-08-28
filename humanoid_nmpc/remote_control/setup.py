@@ -27,6 +27,7 @@ setup(
             "em_tracker_node = remote_control.em_tracker_node:main",
             "calibration_node = remote_control.calibration_node:main",
             "retargeting_node = remote_control.retargeting_node:main",
+            "pose_sequence_node = remote_control.pose_sequence_node:main",
         ],
     },
 )
