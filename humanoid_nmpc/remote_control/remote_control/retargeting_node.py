@@ -230,7 +230,13 @@ class RetargetingNode(Node):
         # so the decomposition is not exact for large angles. For accurate full-range
         # tracking, replace with Pinocchio numerical IK.
         # ----------------------------------------------------------------
-        shoulder_pitch = math.atan2(-E_hat[0], -E_hat[2])
+        # Guard: when arm points nearly straight sideways (E_hat ≈ ±Y), both
+        # E_hat[0] and E_hat[2] are ≈ 0.  IEEE 754 negative-zero makes
+        # atan2(-0.0, -0.0) = -π instead of 0, so we must handle this explicitly.
+        if abs(E_hat[0]) < 1e-6 and abs(E_hat[2]) < 1e-6:
+            shoulder_pitch = 0.0
+        else:
+            shoulder_pitch = math.atan2(-E_hat[0], -E_hat[2])
         shoulder_roll  = math.asin(float(np.clip(E_hat[1], -1.0, 1.0)))
 
         # ----------------------------------------------------------------
