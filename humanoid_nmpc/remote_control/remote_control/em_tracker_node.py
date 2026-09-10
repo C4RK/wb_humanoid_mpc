@@ -26,7 +26,7 @@ class EmTrackerNode(Node):
         # These can be overridden at launch time without changing the code:
         #   ros2 run remote_control em_tracker_node --ros-args -p device_ip:=192.168.1.5
         # 把设备IP地址，设备id，设备端口和发布频率定义为外部参数。
-        self.declare_parameter('device_ip', '192.168.137.10')
+        self.declare_parameter('device_ip', '10.42.0.144')
         self.declare_parameter('device_id', 'module-1')   # default from WMET API
         self.declare_parameter('device_port', 801)         # default TCP port from WMET API
         self.declare_parameter('publish_rate_hz', 50.0)

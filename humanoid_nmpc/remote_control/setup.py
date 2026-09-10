@@ -28,6 +28,7 @@ setup(
             "calibration_node = remote_control.calibration_node:main",
             "retargeting_node = remote_control.retargeting_node:main",
             "pose_sequence_node = remote_control.pose_sequence_node:main",
+            "check_quaternion_stability = remote_control.check_quaternion_stability:main",
         ],
     },
 )

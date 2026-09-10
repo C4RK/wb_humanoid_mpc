@@ -109,8 +109,30 @@ class RetargetingNode(Node):
             cal = load_calibration()
             self.L1 = cal['upper_arm_length_m']  # shoulder to elbow
             self.L2 = cal['forearm_length_m']     # elbow to wrist (receiver)
+
+            # Shoulder offset: X and Y displacement of the wrist when the arm
+            # hangs naturally at rest (caused by body width, hip geometry, and
+            # the gap between the transmitter and the actual shoulder joint).
+            # Subtracting this before IK ensures the natural-rest pose maps to
+            # zero shoulder pitch/roll commands on the robot.
+            # Falls back to zero for old calibration files without this field.
+            # Shoulder joint position in transmitter frame, from sphere-fit
+            # calibration. Subtracted from every wrist reading before IK so
+            # that the IK always works in the shoulder-centred frame.
+            # Falls back to zero for older calibration files.
+            self.shoulder_offset = np.array([
+                cal.get('shoulder_offset_x_m', 0.0),
+                cal.get('shoulder_offset_y_m', 0.0),
+                cal.get('shoulder_offset_z_m', 0.0),
+            ])
+
             self.get_logger().info(
                 f'Calibration: upper_arm={self.L1*100:.1f} cm, forearm={self.L2*100:.1f} cm'
+            )
+            self.get_logger().info(
+                f'Shoulder joint offset: x={self.shoulder_offset[0]*100:.1f} cm, '
+                f'y={self.shoulder_offset[1]*100:.1f} cm, '
+                f'z={self.shoulder_offset[2]*100:.1f} cm'
             )
         except FileNotFoundError as e:
             self.get_logger().fatal(str(e))
@@ -137,10 +159,12 @@ class RetargetingNode(Node):
         Called every time a new EM pose arrives (50 Hz).
         Computes arm joint angles and publishes the full MPC joint state.
         """
-        # Wrist position in shoulder frame (meters)
+        # Wrist position in shoulder frame (meters).
+        # Subtract the shoulder offset so that the natural-rest arm pose maps
+        # to [0, 0, -L_total] — i.e. zero shoulder pitch/roll commands.
         W = np.array([msg.pose.position.x,
                       msg.pose.position.y,
-                      msg.pose.position.z])
+                      msg.pose.position.z]) - self.shoulder_offset
 
         # Forearm orientation as quaternion [w, x, y, z]
         q = np.array([msg.pose.orientation.w,

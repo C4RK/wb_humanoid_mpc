@@ -3,30 +3,44 @@
 """
 calibration_node.py
 
-Determines the user's arm lengths (upper_arm and forearm) from two calibration
-poses using the WMET EM tracker. Results are saved to a YAML file and reused
-in every session without repeating the calibration.
+Determines the user's arm lengths and shoulder joint position using the
+WMET EM tracker. Results are saved to a YAML file and reused every session.
 
-Calibration procedure (two poses):
+Calibration procedure — two sphere fits:
 
-  Pose 1 — Arm hanging straight down:
-    User stands upright, arm fully relaxed at side, elbow straight.
-    The entire arm (upper_arm + forearm) hangs vertically.
-    → total_arm_length = |position_mm| / 1000
+  Step 0 — Shoulder sphere:
+    Extend arm fully straight (elbow locked). Slowly swing it in as many
+    directions as possible for 6 seconds. The wrist traces a sphere whose
+    centre is the shoulder joint.
+      → shoulder_joint (3D position in transmitter frame)
+      → total_arm_length = sphere radius  (cross-check only)
 
-  Pose 2 — Elbow bent 90°, upper arm hanging, forearm horizontal:
-    User keeps upper arm hanging straight down, bends elbow to exactly 90°,
-    forearm points horizontally forward.
-    → upper_arm_length = |position.z|   (vertical component = upper arm)
-    → forearm_length   = sqrt(x² + y²)  (horizontal component = forearm)
+  Step 1 — Elbow sphere:
+    Press your elbow against a fixed point (corner of a wall, table edge).
+    Keep the elbow joint stationary. Rotate ONLY the forearm in as many
+    directions as possible for 6 seconds — the wrist sweeps a sphere
+    centred at the elbow joint.
+      → elbow_joint (3D position in transmitter frame)
+      → forearm_length = sphere radius  (elbow to wrist)
 
-Coordinate frame: transmitter is at shoulder (origin).
+  Compute:
+      upper_arm_length = |elbow_joint − shoulder_joint|
+      Validate: upper_arm + forearm ≈ total_arm (cross-check; not critical)
+
+Why two sphere fits?
+  - No required joint angle (no "exactly 90°", no "arm perfectly down").
+  - No assumption about which axis is vertical or how the transmitter is tilted.
+  - The sphere fit is robust to noisy data; result is independent of pose.
+  - Each step isolates exactly one joint: shoulder (Step 0), elbow (Step 1).
+
+Coordinate frame: all positions are in the EM transmitter frame.
 """
 
 import os
 import math
 import yaml
 import threading
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
@@ -34,41 +48,39 @@ from datetime import datetime, timezone
 
 
 # Where the calibration file is saved.
-# ~/.ros/wmet_calibration.yaml — always accessible regardless of workspace.
 CALIBRATION_FILE = os.path.expanduser('~/.ros/wmet_calibration.yaml')
 
-# How many pose samples to average per calibration pose (at 50 Hz → 2 seconds).
-NUM_SAMPLES = 100#采样数量
+# Duration of each sphere sweep in seconds.
+SWEEP_SECONDS = 8.0
 
-# Maximum allowed difference between total arm length (Pose 1) and
-# upper_arm + forearm (Pose 2). If exceeded, calibration is likely wrong.
-VALIDATION_TOLERANCE_M = 0.03  # 3 cm误差上限
+# Acceptable sphere-fit RMS error — 3 cm.
+FIT_TOLERANCE_M = 0.03
+
+# Acceptable difference between (L1 + L2) and the shoulder-sphere radius.
+# This is a loose cross-check only; L1 and L2 themselves are accurate.
+CROSSCHECK_TOLERANCE_M = 0.05  # 5 cm
 
 
 class CalibrationNode(Node):
 
     def __init__(self):
-        super().__init__('calibration_node')#向ros系统注册一个名为calibration_node的节点
+        super().__init__('calibration_node')
 
-        # Stores the most recent pose received from the EM tracker.
-        self.latest_pose = None#创建变量，暂存来自电磁的姿态数据
-        self._pose_lock = threading.Lock()#创建线程锁，互斥。一共两个线程。接收写入数据；计算臂长
+        self.latest_pose = None
+        self._pose_lock = threading.Lock()
 
-        # Subscribe to the EM tracker topic published by em_tracker_node.py
-        self.pose_subscriber = self.create_subscription(#创建ros2订阅者
-            PoseStamped,#消息类型
-            '/em/pose',#话题名称
-            self._on_pose_received,#回调函数。只要电磁节点往/em/pose发消息，就会触发这个回调函数，把数据存入latest_pose
-            10#QoS队列深度
+        self.pose_subscriber = self.create_subscription(
+            PoseStamped,
+            '/em/pose',
+            self._on_pose_received,
+            10
         )
 
         self.get_logger().info('Calibration node started. Waiting for /em/pose ...')
 
-        # Run the calibration sequence in a background thread so that
-        # rclpy.spin() continues running and subscriber callbacks fire normally.
-        self._calibration_thread = threading.Thread(#后台子线程。跑_run_calibration_sequence校准步骤，完成和用户的交互。
+        self._calibration_thread = threading.Thread(
             target=self._run_calibration_sequence,
-            daemon=True#主程序退出，这个程序也自动销毁。
+            daemon=True
         )
         self._calibration_thread.start()
 
@@ -78,172 +90,256 @@ class CalibrationNode(Node):
 
     def _on_pose_received(self, msg: PoseStamped):
         """Stores the latest pose. Called by rclpy at 50 Hz."""
-        with self._pose_lock:#收到数据自动触发。打开线程锁。
+        with self._pose_lock:
             self.latest_pose = msg
 
     # ------------------------------------------------------------------
-    # Calibration sequence (runs in background thread)
+    # Calibration sequence
     # ------------------------------------------------------------------
 
     def _run_calibration_sequence(self):
-        """
-        Guides the user through two calibration poses interactively.
-        Runs in a separate thread; uses input() to wait for the user.
-        """
+        import time
 
-        # ---- Check for existing calibration ----检查历史的校准文件。
+        # ---- Check for existing calibration ----
         if os.path.exists(CALIBRATION_FILE):
             print(f'\n[Calibration] Existing calibration found at {CALIBRATION_FILE}')
             cal = self._load_calibration()
             print(f'  upper_arm_length = {cal["upper_arm_length_m"]*100:.1f} cm')
             print(f'  forearm_length   = {cal["forearm_length_m"]*100:.1f} cm')
+            if 'shoulder_offset_x_m' in cal:
+                ox = cal['shoulder_offset_x_m']
+                oy = cal['shoulder_offset_y_m']
+                oz = cal.get('shoulder_offset_z_m', 0.0)
+                print(f'  shoulder_joint   = x={ox*100:.1f} cm, y={oy*100:.1f} cm, '
+                      f'z={oz*100:.1f} cm  (transmitter frame)')
             answer = input('\nUse existing calibration? [Y/n]: ').strip().lower()
             if answer != 'n':
                 print('[Calibration] Using existing calibration. Node will now exit.')
                 return
 
-        # ---- Wait for first pose to arrive ----阻塞等待传感器的首帧数据。
+        # ---- Wait for first pose ----
         print('\n[Calibration] Waiting for EM tracker data on /em/pose ...')
         while rclpy.ok():
             with self._pose_lock:
                 if self.latest_pose is not None:
                     break
-            import time; time.sleep(0.1)
+            time.sleep(0.1)
         print('[Calibration] EM tracker data received.\n')
 
-        # ---- Pose 1: Arm hanging straight down ----
-        print('=' * 55)
-        print('POSE 1: Arm hanging straight down')
-        print('  Stand upright. Let your arm hang fully relaxed.')
-        print('  Keep elbow straight. Do NOT move during recording.')
-        print('=' * 55)
-        input('Press ENTER when ready...')#阻塞等待，用户站好后按回车
+        # ================================================================
+        # STEP 0 — Shoulder sphere
+        # ================================================================
+        print('=' * 60)
+        print('STEP 0: Shoulder sphere — locate the shoulder joint')
+        print()
+        print('  1. LOCK your elbow completely straight.')
+        print('  2. Press ENTER, then slowly swing your whole arm for')
+        print(f'     {SWEEP_SECONDS:.0f} seconds in as many directions as possible:')
+        print('       → forward, sideways, up, down, diagonal.')
+        print('  3. Keep the elbow LOCKED the ENTIRE time.')
+        print('  4. Move slowly and smoothly — fast motion is not needed.')
+        print()
+        print('  WHY: the wrist traces a sphere whose CENTRE is your')
+        print('       shoulder joint — no matter how the transmitter is tilted.')
+        print('=' * 60)
+        input('Press ENTER, then start sweeping...')
 
-        samples_1 = self._collect_samples(NUM_SAMPLES)#在 2 秒内采集 100 帧新数据
-        P1 = self._average_position(samples_1)#求算术平均值得到消除噪声后的手腕三维坐标
-        total_arm_length = math.sqrt(P1[0]**2 + P1[1]**2 + P1[2]**2)
+        samples_0 = self._collect_samples_timed(SWEEP_SECONDS)
+        shoulder_joint, shoulder_sphere_radius, rms_0 = self._fit_sphere(samples_0)
 
-        print(f'  Recorded position: x={P1[0]*100:.1f} cm, y={P1[1]*100:.1f} cm, z={P1[2]*100:.1f} cm')
-        print(f'  → Total arm length: {total_arm_length*100:.1f} cm\n')
+        print(f'\n  Shoulder joint (transmitter frame):')
+        print(f'    x = {shoulder_joint[0]*100:+.1f} cm')
+        print(f'    y = {shoulder_joint[1]*100:+.1f} cm')
+        print(f'    z = {shoulder_joint[2]*100:+.1f} cm')
+        print(f'  → Sphere radius (≈ total arm length): {shoulder_sphere_radius*100:.1f} cm')
+        print(f'  → Fit error: {rms_0*100:.1f} cm RMS')
 
-        # ---- Pose 2: Elbow bent 90°, upper arm down, forearm horizontal ----
-        print('=' * 55)
-        print('POSE 2: Elbow bent 90°')
-        print('  Keep upper arm hanging straight down.')
-        print('  Bend elbow to exactly 90°.')
-        print('  Forearm points horizontally forward.')
-        print('  Do NOT move during recording.')
-        print('=' * 55)
-        input('Press ENTER when ready...')
-
-        samples_2 = self._collect_samples(NUM_SAMPLES)
-        P2 = self._average_position(samples_2)
-
-        # In this pose:
-        #   upper arm hangs down → z-component = -upper_arm_length
-        #   forearm points forward → x,y-components = forearm_length
-        upper_arm_length = abs(P2[2])#大臂
-        forearm_length   = math.sqrt(P2[0]**2 + P2[1]**2)#小臂
-
-        print(f'  Recorded position: x={P2[0]*100:.1f} cm, y={P2[1]*100:.1f} cm, z={P2[2]*100:.1f} cm')
-        print(f'  → upper_arm_length: {upper_arm_length*100:.1f} cm')
-        print(f'  → forearm_length:   {forearm_length*100:.1f} cm\n')
-
-        # ---- Validation ----
-        computed_total = upper_arm_length + forearm_length#根据大臂和小臂 计算总臂长
-        error = abs(computed_total - total_arm_length)#再和第一个动作计算的总臂长 作差
-        print(f'Validation: Pose1 total = {total_arm_length*100:.1f} cm, '
-              f'Pose2 sum = {computed_total*100:.1f} cm, '
-              f'difference = {error*100:.1f} cm')#得出误差为
-
-        if error > VALIDATION_TOLERANCE_M:#如果误差超过上限
-            print(f'\n[WARNING] Difference ({error*100:.1f} cm) exceeds tolerance '
-                  f'({VALIDATION_TOLERANCE_M*100:.0f} cm).')
-            print('  Possible causes:')
-            print('  - Arm was not fully straight in Pose 1')#手臂在动作1 没有完全伸直
-            print('  - Elbow was not exactly 90° in Pose 2')#手臂在动作2 没有完全垂直
-            answer = input('Save anyway? [y/N]: ').strip().lower()
-            if answer != 'y':
-                print('[Calibration] Calibration cancelled. Please try again.')
-                return#直接退出函数，节点运行结束。这里可以考虑更改为while循环
+        if rms_0 > FIT_TOLERANCE_M:
+            print(f'\n[WARNING] Fit error ({rms_0*100:.1f} cm) > {FIT_TOLERANCE_M*100:.0f} cm.')
+            print('  Likely cause: elbow was not kept locked straight.')
+            answer = input('Try again? [Y/n]: ').strip().lower()
+            if answer != 'n':
+                print('[Calibration] Cancelled. Please redo Step 0 with elbow locked.')
+                return
         else:
-            print('[Calibration] Validation passed.')
+            print('[Calibration] Step 0 passed.\n')
 
-        # ---- Save ----
-        self._save_calibration(upper_arm_length, forearm_length, total_arm_length)#数据保存
+        # ================================================================
+        # STEP 1 — Elbow sphere
+        # ================================================================
+        print('=' * 60)
+        print('STEP 1: Elbow sphere — measure forearm length')
+        print()
+        print('  Goal: keep your ELBOW JOINT stationary while sweeping')
+        print('        the wrist in as many directions as possible.')
+        print()
+        print('  How to fix the elbow:')
+        print('    • Best:  press the point of your elbow into a wall corner.')
+        print('    • Also:  rest the back of the elbow on a table edge.')
+        print('    • Also:  grip the upper arm firmly with your other hand')
+        print('             just above the elbow, pressing the elbow inward.')
+        print()
+        print('  Motion: once the elbow is fixed, move ONLY the forearm —')
+        print('    rotate it up, down, left, right, in circles.')
+        print('    The wrist should trace a sphere centred at the elbow.')
+        print()
+        print(f'  Sweep for {SWEEP_SECONDS:.0f} seconds after pressing ENTER.')
+        print('=' * 60)
+        input('Press ENTER, then start sweeping...')
+
+        samples_1 = self._collect_samples_timed(SWEEP_SECONDS)
+        elbow_joint, forearm_length, rms_1 = self._fit_sphere(samples_1)
+
+        print(f'\n  Elbow joint (transmitter frame):')
+        print(f'    x = {elbow_joint[0]*100:+.1f} cm')
+        print(f'    y = {elbow_joint[1]*100:+.1f} cm')
+        print(f'    z = {elbow_joint[2]*100:+.1f} cm')
+        print(f'  → Forearm length (elbow to wrist): {forearm_length*100:.1f} cm')
+        print(f'  → Fit error: {rms_1*100:.1f} cm RMS')
+
+        if rms_1 > FIT_TOLERANCE_M:
+            print(f'\n[WARNING] Fit error ({rms_1*100:.1f} cm) > {FIT_TOLERANCE_M*100:.0f} cm.')
+            print('  Likely cause: elbow joint moved during the sweep.')
+            answer = input('Try again? [Y/n]: ').strip().lower()
+            if answer != 'n':
+                print('[Calibration] Cancelled. Please redo Step 1 with elbow held still.')
+                return
+        else:
+            print('[Calibration] Step 1 passed.\n')
+
+        # ================================================================
+        # Compute upper arm and validate
+        # ================================================================
+        upper_arm_length = float(np.linalg.norm(elbow_joint - shoulder_joint))
+        computed_total = upper_arm_length + forearm_length
+
+        print(f'  → upper_arm_length: {upper_arm_length*100:.1f} cm  '
+              f'(distance between sphere centres)')
+        print(f'  → forearm_length:   {forearm_length*100:.1f} cm  '
+              f'(Step 1 sphere radius)')
+        print(f'  → L1 + L2:          {computed_total*100:.1f} cm')
+        print(f'  → Step 0 radius:    {shoulder_sphere_radius*100:.1f} cm  '
+              f'(cross-check)')
+
+        cross_error = abs(computed_total - shoulder_sphere_radius)
+        print(f'  → Cross-check diff: {cross_error*100:.1f} cm  '
+              f'(target < {CROSSCHECK_TOLERANCE_M*100:.0f} cm)')
+
+        if cross_error > CROSSCHECK_TOLERANCE_M:
+            print(f'\n[NOTE] Cross-check diff ({cross_error*100:.1f} cm) > '
+                  f'{CROSSCHECK_TOLERANCE_M*100:.0f} cm.')
+            print('  This usually means the elbow was slightly bent in Step 0,')
+            print('  making the shoulder sphere radius smaller than L1+L2.')
+            print('  L1 and L2 themselves (from sphere centres and Step 1 radius)')
+            print('  are still accurate — this warning is informational only.')
+            input('Press ENTER to save anyway...')
+        else:
+            print('[Calibration] Cross-check passed.')
+
+        self._save_calibration(upper_arm_length, forearm_length,
+                               computed_total, shoulder_joint)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
-        print('[Calibration] You can now start retargeting_node.py.')
+        print('[Calibration] You can now start retargeting_node.')
 
     # ------------------------------------------------------------------
     # Sample collection helpers
     # ------------------------------------------------------------------
 
-    def _collect_samples(self, n: int) -> list:
+    def _collect_samples_timed(self, duration_sec: float) -> list:
         """
-        Collects n pose samples from /em/pose.
-        Waits for each new sample (skips duplicates by tracking the last stamp).
-        Returns a list of PoseStamped messages.
+        Collects all unique pose samples received over a fixed duration.
         """
         import time
-        samples = []#创建一个列表，用来存放收集到的 PoseStamped 消息对象
-        last_stamp = None#用来记录上一帧数据的 ROS2 时间戳，这是实现去重的关键变量
-        print(f'  Recording {n} samples ', end='', flush=True)
+        samples = []
+        last_stamp = None
+        end_time = time.time() + duration_sec
+        print(f'  Sweeping for {duration_sec:.0f} s ', end='', flush=True)
 
-        while len(samples) < n:
-            with self._pose_lock:#上锁
+        while time.time() < end_time:
+            with self._pose_lock:
                 msg = self.latest_pose
             if msg is not None:
                 stamp = (msg.header.stamp.sec, msg.header.stamp.nanosec)
                 if stamp != last_stamp:
-                    samples.append(msg)#将msg添加到stamp中
-                    last_stamp = stamp#更新stamp
-                    if len(samples) % 10 == 0:
-                        print('.', end='', flush=True)#打点 显示在屏幕中
-            time.sleep(0.01)  # poll at 100 Hz, data arrives at 50 Hz
+                    samples.append(msg)
+                    last_stamp = stamp
+                    if len(samples) % 50 == 0:
+                        print('.', end='', flush=True)
+            time.sleep(0.01)
 
-        print(f' done ({n} samples)')
+        print(f' done ({len(samples)} samples)')
         return samples
 
-    def _average_position(self, samples: list) -> list:#计算平均
-        """Returns the mean [x, y, z] position in meters from a list of PoseStamped."""
-        x = sum(s.pose.position.x for s in samples) / len(samples)
-        y = sum(s.pose.position.y for s in samples) / len(samples)
-        z = sum(s.pose.position.z for s in samples) / len(samples)
-        return [x, y, z]
+    def _fit_sphere(self, samples: list):
+        """
+        Algebraic least-squares sphere fit.
+
+        Every point p on a sphere satisfies:
+            |p - c|² = r²
+        Rearranged: x² + y² + z² + Ax + By + Cz + D = 0
+        which is linear in [A, B, C, D] → solved with numpy lstsq.
+
+        Returns:
+            center   — np.array([cx, cy, cz])  in metres
+            radius   — float, in metres
+            rms      — RMS distance residual, in metres
+        """
+        pts = np.array([
+            [s.pose.position.x, s.pose.position.y, s.pose.position.z]
+            for s in samples
+        ])
+
+        A_mat = np.column_stack([pts, np.ones(len(pts))])
+        b_vec = -(pts[:, 0]**2 + pts[:, 1]**2 + pts[:, 2]**2)
+
+        coeffs, _, _, _ = np.linalg.lstsq(A_mat, b_vec, rcond=None)
+        A, B, C, D = coeffs
+
+        cx, cy, cz = -A / 2.0, -B / 2.0, -C / 2.0
+        r_sq = cx**2 + cy**2 + cz**2 - D
+        radius = math.sqrt(max(r_sq, 0.0))
+
+        center = np.array([cx, cy, cz])
+        dists = np.linalg.norm(pts - center, axis=1)
+        rms = float(np.sqrt(np.mean((dists - radius) ** 2)))
+
+        return center, radius, rms
 
     # ------------------------------------------------------------------
-    # YAML load / save 
+    # YAML load / save
     # ------------------------------------------------------------------
-    #数据写入
-    def _save_calibration(self, upper_arm_m: float, forearm_m: float, total_m: float):#接收三个浮点数
-        """Writes calibration results to YAML file."""
-        os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)#创建目录
-        data = {#创建字典结构
+
+    def _save_calibration(self, upper_arm_m: float, forearm_m: float,
+                          total_m: float, shoulder_joint: np.ndarray):
+        os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
+        data = {
             'calibration': {
-                'upper_arm_length_m': round(upper_arm_m, 4),
-                'forearm_length_m':   round(forearm_m, 4),
-                'total_arm_length_m': round(total_m, 4),
+                'upper_arm_length_m':  round(upper_arm_m, 4),
+                'forearm_length_m':    round(forearm_m, 4),
+                'total_arm_length_m':  round(total_m, 4),
+                'shoulder_offset_x_m': round(float(shoulder_joint[0]), 4),
+                'shoulder_offset_y_m': round(float(shoulder_joint[1]), 4),
+                'shoulder_offset_z_m': round(float(shoulder_joint[2]), 4),
                 'calibrated_at': datetime.now(timezone.utc).isoformat(),
             }
         }
-        with open(CALIBRATION_FILE, 'w') as f:#写入模式
-            yaml.dump(data, f, default_flow_style=False)#块状可读文本
-    #数据读取
+        with open(CALIBRATION_FILE, 'w') as f:
+            yaml.dump(data, f, default_flow_style=False)
+
     def _load_calibration(self) -> dict:
-        """Reads calibration results from YAML file. Returns the inner dict."""
-        with open(CALIBRATION_FILE, 'r') as f:#只读
+        with open(CALIBRATION_FILE, 'r') as f:
             data = yaml.safe_load(f)
-        return data['calibration']#返回字典
+        return data['calibration']
 
 
 # -----------------------------------------------------------------------
-# Static helper — used by other nodes (retargeting_node.py) 
+# Static helper — used by retargeting_node.py
 # -----------------------------------------------------------------------
 
-def load_calibration() -> dict:#没有self ，外部节点可以调用。
+def load_calibration() -> dict:
     """
     Load calibration from the YAML file.
-    Import this function in retargeting_node.py:
+    Import this in retargeting_node.py:
 
         from remote_control.calibration_node import load_calibration
         cal = load_calibration()
@@ -252,14 +348,14 @@ def load_calibration() -> dict:#没有self ，外部节点可以调用。
 
     Raises FileNotFoundError if calibration has not been run yet.
     """
-    if not os.path.exists(CALIBRATION_FILE):#防错。如果没有文档，主动抛出异常。
+    if not os.path.exists(CALIBRATION_FILE):
         raise FileNotFoundError(
             f'Calibration file not found at {CALIBRATION_FILE}. '
             'Please run calibration_node first.'
         )
     with open(CALIBRATION_FILE, 'r') as f:
         data = yaml.safe_load(f)
-    return data['calibration']#读取并解析yaml数据
+    return data['calibration']
 
 
 # -----------------------------------------------------------------------
