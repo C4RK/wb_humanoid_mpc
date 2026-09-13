@@ -6,40 +6,37 @@ calibration_node.py
 Determines the user's arm lengths and shoulder joint position using the
 WMET EM tracker. Results are saved to a YAML file and reused every session.
 
-Calibration procedure — three steps:
+Calibration procedure:
 
-  Step 0 — Shoulder sphere:
-    Extend arm fully straight (elbow locked). Slowly swing it in as many
-    directions as possible for 8 seconds. The wrist traces a sphere whose
-    centre is the shoulder joint.
+  Step 0 — Shoulder sphere (8 s sweep, elbow locked straight):
+    The wrist traces a sphere whose centre is the shoulder joint.
       → shoulder_joint  (3D position in transmitter frame)
-      → sphere_radius   (cross-check total arm length)
+      → sphere_radius   (≈ total arm length, used as cross-check)
 
-  Step 1 — Arm hanging straight down:
-    Let the arm hang fully relaxed and straight. Record a 2-second average.
-      → total_arm_length = |wrist − shoulder_joint|  (accurate, single static pose)
-      → Verify that sphere_radius ≈ total_arm_length.
+  Step 1 — Free arm motion (15 s, varying elbow angle):
+    Move the arm freely — bend and straighten the elbow while also
+    moving the shoulder in different directions.  For each of the ~750
+    recorded poses the sensor provides both the wrist position W and the
+    forearm direction f (from the quaternion).  The elbow lies at:
 
-  Step 2 — Elbow bent (any angle, roughly 90° is ideal):
-    Bend the elbow to any noticeable angle (60°–120° is fine).
-    Hold still. The calibration uses the forearm orientation vector from the
-    sensor, so the exact angle does not matter — only "not straight".
+        E = W − L2 · f
 
-    Law-of-Cosines formula:
-      V          = wrist − shoulder_joint
-      d_sw       = |V|
-      L2 = (L_total² − d_sw²) / (2 × (L_total − V · forearm_dir))
-      L1 = L_total − L2
+    and must always be exactly L1 from the shoulder joint S:
 
-    This is exact regardless of elbow angle — no sweeping, no fixed reference
-    surface, no precision poses required.
+        |E − S|² = L1²
 
-Why this works better than a second sphere fit:
-  The elbow is a hinge joint, not ball-and-socket. Sweeping the forearm
-  traces an arc (1-D), not a sphere (2-D surface). A sphere fit of an arc
-  is numerically ill-conditioned and produces unreliable radii. The law-of-
-  cosines formula instead exploits the receiver's orientation output, which
-  is already highly accurate.
+    Substituting V = W − S and expanding:
+
+        2·(V·f)·L2 + (L1² − L2²) = |V|²
+
+    This is LINEAR in the two unknowns [L2, u = L1²−L2²].
+    Stacking one row per pose gives an overdetermined linear system
+    that is solved with least squares.  Both L1 and L2 emerge directly
+    — no subtraction, no dependency between them.
+
+    Good conditioning requires V·f to vary widely across poses.
+    Bending/straightening the elbow drives V·f from ≈L2 (bent)
+    to ≈L_total (straight), which maximises the information content.
 
 Coordinate frame: all positions are in the EM transmitter frame.
 """
@@ -55,23 +52,25 @@ from geometry_msgs.msg import PoseStamped
 from datetime import datetime, timezone
 
 
-# Where the calibration file is saved.
 CALIBRATION_FILE = os.path.expanduser('~/.ros/wmet_calibration.yaml')
 
-# Duration of the shoulder sphere sweep, seconds.
-SWEEP_SECONDS = 8.0
+# Step 0 sweep duration (seconds).
+SWEEP_SECONDS_SHOULDER = 8.0
 
-# Static-pose sample count (50 Hz × 2 s = 100 samples).
-NUM_SAMPLES = 100
+# Step 1 free-motion duration (seconds).
+SWEEP_SECONDS_FREE = 15.0
 
 # Forearm direction in the receiver's local frame (empirically confirmed).
 FOREARM_LOCAL_AXIS = np.array([0.0, 1.0, 0.0])
 
 # Acceptable sphere-fit RMS error.
-SPHERE_FIT_TOLERANCE_M = 0.03  # 3 cm
+SPHERE_FIT_TOLERANCE_M = 0.03
 
-# Acceptable deviation between sphere radius and static total arm length.
-ARM_LENGTH_CROSSCHECK_M = 0.05  # 5 cm
+# Acceptable RMS elbow-distance residual from the linear solve (1 cm tight).
+SOLVE_RMS_TOLERANCE_M = 0.02
+
+# Acceptable deviation between (L1+L2) and the sphere radius (loose check).
+CROSSCHECK_TOLERANCE_M = 0.05
 
 
 class CalibrationNode(Node):
@@ -113,14 +112,14 @@ class CalibrationNode(Node):
             print(f'  upper_arm_length = {cal["upper_arm_length_m"]*100:.1f} cm')
             print(f'  forearm_length   = {cal["forearm_length_m"]*100:.1f} cm')
             if 'shoulder_offset_x_m' in cal:
-                ox = cal['shoulder_offset_x_m']
-                oy = cal['shoulder_offset_y_m']
-                oz = cal.get('shoulder_offset_z_m', 0.0)
-                print(f'  shoulder_joint   = x={ox*100:.1f} cm, y={oy*100:.1f} cm, '
-                      f'z={oz*100:.1f} cm  (transmitter frame)')
+                ox, oy, oz = (cal['shoulder_offset_x_m'],
+                              cal['shoulder_offset_y_m'],
+                              cal.get('shoulder_offset_z_m', 0.0))
+                print(f'  shoulder_joint   = x={ox*100:.1f}, y={oy*100:.1f}, '
+                      f'z={oz*100:.1f} cm')
             answer = input('\nUse existing calibration? [Y/n]: ').strip().lower()
             if answer != 'n':
-                print('[Calibration] Using existing calibration. Node will now exit.')
+                print('[Calibration] Using existing calibration.')
                 return
 
         # ---- Wait for first pose ----
@@ -139,31 +138,32 @@ class CalibrationNode(Node):
         print('STEP 0: Shoulder sphere — locate the shoulder joint')
         print()
         print('  1. LOCK your elbow completely straight.')
-        print('  2. Press ENTER, then slowly swing your whole arm for')
-        print(f'     {SWEEP_SECONDS:.0f} seconds in as many directions as possible:')
-        print('       → forward, sideways, up, down, diagonal.')
+        print(f'  2. Press ENTER, then sweep your arm for '
+              f'{SWEEP_SECONDS_SHOULDER:.0f} seconds')
+        print('     in as many shoulder directions as possible:')
+        print('       → forward, sideways, up, diagonal, down.')
         print('  3. Keep the elbow LOCKED the ENTIRE time.')
-        print('  4. Move slowly and smoothly — fast motion is not needed.')
+        print('  4. Move slowly and smoothly.')
         print()
         print('  WHY: the wrist traces a sphere; its centre is your')
-        print('       shoulder joint, regardless of transmitter tilt.')
+        print('       shoulder joint — regardless of transmitter tilt.')
         print('=' * 60)
         input('Press ENTER, then start sweeping...')
 
-        pivot_samples = self._collect_samples_timed(SWEEP_SECONDS)
-        shoulder_joint, sphere_radius, rms_err = self._fit_sphere(pivot_samples)
+        samples_0 = self._collect_samples_timed(SWEEP_SECONDS_SHOULDER)
+        shoulder_joint, sphere_radius, rms_0 = self._fit_sphere(samples_0)
 
         print(f'\n  Shoulder joint (transmitter frame):')
         print(f'    x = {shoulder_joint[0]*100:+.1f} cm')
         print(f'    y = {shoulder_joint[1]*100:+.1f} cm')
         print(f'    z = {shoulder_joint[2]*100:+.1f} cm')
-        print(f'  → Sphere radius (cross-check): {sphere_radius*100:.1f} cm')
-        print(f'  → Fit error: {rms_err*100:.1f} cm RMS')
+        print(f'  → Sphere radius (cross-check ≈ total arm): '
+              f'{sphere_radius*100:.1f} cm')
+        print(f'  → Fit error: {rms_0*100:.1f} cm RMS')
 
-        if rms_err > SPHERE_FIT_TOLERANCE_M:
-            print(f'\n[WARNING] Fit error ({rms_err*100:.1f} cm) > '
-                  f'{SPHERE_FIT_TOLERANCE_M*100:.0f} cm.')
-            print('  Likely cause: elbow was not kept locked straight.')
+        if rms_0 > SPHERE_FIT_TOLERANCE_M:
+            print(f'\n[WARNING] Fit error {rms_0*100:.1f} cm > '
+                  f'{SPHERE_FIT_TOLERANCE_M*100:.0f} cm — elbow may not be locked.')
             answer = input('Retry? [Y/n]: ').strip().lower()
             if answer != 'n':
                 print('[Calibration] Please redo Step 0 with elbow locked.')
@@ -172,148 +172,151 @@ class CalibrationNode(Node):
             print('[Calibration] Step 0 passed.\n')
 
         # ================================================================
-        # STEP 1 — Arm hanging straight down (accurate total arm length)
+        # STEP 1 — Free motion: solve L1 and L2 simultaneously
         # ================================================================
         print('=' * 60)
-        print('STEP 1: Arm hanging straight down')
+        print('STEP 1: Free arm motion — solve upper arm and forearm lengths')
         print()
-        print('  Stand upright. Let your arm hang fully relaxed at your side.')
-        print('  Keep elbow STRAIGHT. Do NOT move during recording.')
+        print('  Move your arm FREELY for 15 seconds.')
         print()
-        print('  This gives the accurate total arm length (shoulder to wrist).')
+        print('  What to do:')
+        print('    • Continuously BEND and STRAIGHTEN the elbow')
+        print('      (vary from about 30° to almost fully extended).')
+        print('    • At the same time, move the SHOULDER in different')
+        print('      directions (forward, sideways, up, diagonally).')
+        print('    • Move slowly and steadily — no fast flicks.')
+        print()
+        print('  What NOT to do:')
+        print('    • Don\'t hold any fixed pose — keep moving the whole time.')
+        print('    • Don\'t stay at one elbow angle — varying it is essential.')
+        print()
+        print('  WHY: each arm pose gives one linear equation in L1 and L2.')
+        print('       ~750 poses together give a highly overdetermined system')
+        print('       that is solved with least squares — no subtraction.')
         print('=' * 60)
-        input('Press ENTER when ready...')
+        input('Press ENTER, then start moving...')
 
-        samples_1 = self._collect_samples(NUM_SAMPLES)
-        pos_1, _ = self._average_pose(samples_1)
-        P1 = np.array(pos_1)
+        samples_1 = self._collect_samples_timed(SWEEP_SECONDS_FREE)
+        L1, L2, rms_elbow = self._solve_arm_lengths_simultaneous(
+            samples_1, shoulder_joint)
 
-        P1_rel = P1 - shoulder_joint
-        total_arm_length = float(np.linalg.norm(P1_rel))
+        if L1 is None:
+            print('\n[ERROR] Linear solve failed — no valid solution found.')
+            print('  Likely cause: elbow angle did not vary enough.')
+            print('  Please try again and make sure to bend/straighten the elbow.')
+            return
 
-        print(f'  Recorded wrist: x={P1[0]*100:.1f} cm, y={P1[1]*100:.1f} cm, '
-              f'z={P1[2]*100:.1f} cm')
-        print(f'  → Total arm length: {total_arm_length*100:.1f} cm  '
-              f'(sphere radius was {sphere_radius*100:.1f} cm)')
+        computed_total = L1 + L2
+        crosscheck = abs(computed_total - sphere_radius)
 
-        crosscheck = abs(total_arm_length - sphere_radius)
-        if crosscheck > ARM_LENGTH_CROSSCHECK_M:
-            print(f'\n[WARNING] Arm length vs sphere radius differ by '
-                  f'{crosscheck*100:.1f} cm (>{ARM_LENGTH_CROSSCHECK_M*100:.0f} cm).')
+        print(f'\n  → upper_arm_length (L1): {L1*100:.1f} cm')
+        print(f'  → forearm_length   (L2): {L2*100:.1f} cm')
+        print(f'  → L1 + L2:              {computed_total*100:.1f} cm')
+        print(f'  → Sphere radius (Step 0): {sphere_radius*100:.1f} cm  '
+              f'(cross-check, diff = {crosscheck*100:.1f} cm)')
+        print(f'  → Elbow residual RMS:    {rms_elbow*100:.2f} cm')
+
+        if rms_elbow > SOLVE_RMS_TOLERANCE_M:
+            print(f'\n[WARNING] Elbow residual RMS ({rms_elbow*100:.2f} cm) is high.')
             print('  Possible causes:')
-            print('  - Elbow was bent during Step 0 sweep (sphere radius too small)')
-            print('  - Arm was not fully straight in Step 1')
-            answer = input('Continue anyway? [y/N]: ').strip().lower()
+            print('  - Arm did not move enough / elbow angle was not varied')
+            print('  - Transmitter shifted during the motion')
+            answer = input('Save anyway? [y/N]: ').strip().lower()
             if answer != 'y':
-                print('[Calibration] Cancelled. Please redo.')
+                print('[Calibration] Cancelled. Please try Step 1 again.')
                 return
-        else:
-            print(f'  → Cross-check passed (diff = {crosscheck*100:.1f} cm).\n')
 
-        # ================================================================
-        # STEP 2 — Elbow bent: compute forearm length from law of cosines
-        # ================================================================
-        print('=' * 60)
-        print('STEP 2: Elbow bent — compute arm segment lengths')
-        print()
-        print('  Bend your elbow to roughly 90° (anywhere from 60° to 120°')
-        print('  works — the exact angle does NOT matter).')
-        print()
-        print('  Keep the upper arm naturally at your side.')
-        print('  Hold completely still. Do NOT move during recording.')
-        print()
-        print('  HOW IT WORKS: the sensor already knows your forearm direction.')
-        print('  Combined with the shoulder position (Step 0) and total arm')
-        print('  length (Step 1), the exact split between upper arm and forearm')
-        print('  is solved mathematically from the law of cosines.')
-        print('=' * 60)
-        input('Press ENTER when ready...')
+        if crosscheck > CROSSCHECK_TOLERANCE_M:
+            print(f'\n[NOTE] L1+L2 vs sphere radius differ by {crosscheck*100:.1f} cm.')
+            print('  The elbow may have been slightly bent during Step 0.')
+            print('  L1 and L2 from the linear solve are independent of this.')
 
-        samples_2 = self._collect_samples(NUM_SAMPLES)
-        pos_2, q_avg = self._average_pose(samples_2)
-        P2 = np.array(pos_2)
+        # Sanity check on individual values
+        for name, val, lo, hi in [('upper arm', L1, 0.15, 0.45),
+                                   ('forearm',   L2, 0.15, 0.35)]:
+            if not (lo < val < hi):
+                print(f'\n[WARNING] {name} = {val*100:.1f} cm is outside the '
+                      f'typical range ({lo*100:.0f}–{hi*100:.0f} cm).')
 
-        # Forearm direction from receiver orientation.
-        R = _quat_to_matrix(np.array(q_avg))
-        forearm_dir = R @ FOREARM_LOCAL_AXIS  # unit vector: elbow → wrist
-
-        # Law of cosines in the shoulder-elbow-wrist triangle.
-        V = P2 - shoulder_joint              # shoulder → wrist vector
-        d_sw = float(np.linalg.norm(V))      # shoulder-to-wrist distance
-        V_dot_f = float(np.dot(V, forearm_dir))
-
-        denom = 2.0 * (total_arm_length - V_dot_f)
-
-        if abs(denom) < 1e-4:
-            print('\n[ERROR] Arm appears to be nearly straight in Step 2.')
-            print('  Please bend the elbow to at least 30° and try again.')
-            return
-
-        forearm_length = (total_arm_length**2 - d_sw**2) / denom
-        upper_arm_length = total_arm_length - forearm_length
-
-        print(f'\n  Recorded wrist: x={P2[0]*100:.1f} cm, y={P2[1]*100:.1f} cm, '
-              f'z={P2[2]*100:.1f} cm')
-        print(f'  Shoulder-to-wrist distance: {d_sw*100:.1f} cm')
-        print(f'  Forearm direction: [{forearm_dir[0]:+.3f}, {forearm_dir[1]:+.3f}, '
-              f'{forearm_dir[2]:+.3f}]')
-        print()
-        print(f'  → upper_arm_length: {upper_arm_length*100:.1f} cm')
-        print(f'  → forearm_length:   {forearm_length*100:.1f} cm')
-        print(f'  → L1 + L2:          {(upper_arm_length+forearm_length)*100:.1f} cm  '
-              f'(= total arm ✓)')
-
-        # Sanity checks
-        ok = True
-        if forearm_length <= 0.0 or forearm_length >= total_arm_length:
-            print('\n[ERROR] Forearm length is out of range. Likely causes:')
-            print('  - Arm was nearly straight in Step 2 (bend more)')
-            print('  - Forearm sensor axis is wrong (flip FOREARM_LOCAL_AXIS)')
-            ok = False
-        if upper_arm_length <= 0.0:
-            print('\n[ERROR] Upper arm length is negative. Check Step 0 and Step 2.')
-            ok = False
-        if ok and (forearm_length < 0.15 or forearm_length > 0.40):
-            print(f'\n[WARNING] Forearm length {forearm_length*100:.1f} cm seems '
-                  'outside typical range (15–40 cm). Please verify.')
-        if ok and (upper_arm_length < 0.15 or upper_arm_length > 0.45):
-            print(f'\n[WARNING] Upper arm length {upper_arm_length*100:.1f} cm seems '
-                  'outside typical range (15–45 cm). Please verify.')
-
-        if not ok:
-            return
-
-        self._save_calibration(upper_arm_length, forearm_length,
-                               total_arm_length, shoulder_joint)
+        self._save_calibration(L1, L2, computed_total, shoulder_joint)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
         print('[Calibration] You can now start retargeting_node.')
 
     # ------------------------------------------------------------------
-    # Sample collection helpers
+    # Core solver
     # ------------------------------------------------------------------
 
-    def _collect_samples(self, n: int) -> list:
-        """Collect n unique pose samples from /em/pose."""
-        import time
-        samples = []
-        last_stamp = None
-        print(f'  Recording {n} samples ', end='', flush=True)
-        while len(samples) < n:
-            with self._pose_lock:
-                msg = self.latest_pose
-            if msg is not None:
-                stamp = (msg.header.stamp.sec, msg.header.stamp.nanosec)
-                if stamp != last_stamp:
-                    samples.append(msg)
-                    last_stamp = stamp
-                    if len(samples) % 10 == 0:
-                        print('.', end='', flush=True)
-            time.sleep(0.01)
-        print(f' done ({n} samples)')
-        return samples
+    def _solve_arm_lengths_simultaneous(self, samples, shoulder_joint):
+        """
+        Solve for L1 and L2 simultaneously from many arm poses.
+
+        For each pose:
+          V = W − S,  f = forearm_dir
+          Constraint: |V − L2·f|² = L1²
+          Expanded:   2·(V·f)·L2 + (L1²−L2²) = |V|²
+
+        Let u = L1²−L2².  Build the system A @ [L2, u]ᵀ = b:
+          A[i,:] = [2·(V_i·f_i),  1]
+          b[i]   = |V_i|²
+
+        Solve with lstsq, then L1 = sqrt(L2² + u).
+
+        Returns (L1, L2, rms_m) or (None, None, inf) on failure.
+        """
+        positions = np.array([
+            [s.pose.position.x, s.pose.position.y, s.pose.position.z]
+            for s in samples
+        ])
+        quats = np.array([
+            [s.pose.orientation.w, s.pose.orientation.x,
+             s.pose.orientation.y, s.pose.orientation.z]
+            for s in samples
+        ])
+
+        # Forearm directions
+        forearm_dirs = np.array([
+            _quat_to_matrix(q) @ FOREARM_LOCAL_AXIS for q in quats
+        ])  # (N, 3)
+
+        V = positions - shoulder_joint    # (N, 3)
+        Vdotf = np.sum(V * forearm_dirs, axis=1)   # (N,)
+        V_sq  = np.sum(V ** 2,           axis=1)   # (N,)
+
+        # Build linear system
+        A = np.column_stack([2.0 * Vdotf, np.ones(len(samples))])
+        b = V_sq
+
+        sol, _, rank, sv = np.linalg.lstsq(A, b, rcond=None)
+
+        # Condition check: if the two columns are nearly linearly dependent
+        # (V·f barely varies), the system is ill-conditioned.
+        cond = sv[0] / sv[-1] if sv[-1] > 1e-12 else float('inf')
+        if cond > 1e6:
+            print(f'  [Solver] Condition number too high ({cond:.0f}) — '
+                  'not enough variation in elbow angle.')
+            return None, None, float('inf')
+
+        L2 = float(sol[0])
+        u  = float(sol[1])   # u = L1² − L2²
+
+        L1_sq = L2**2 + u
+        if L2 <= 0.05 or L1_sq <= 0.0:
+            return None, None, float('inf')
+
+        L1 = math.sqrt(L1_sq)
+
+        # RMS of elbow-distance residuals (interpretable: metres)
+        computed_elbows = positions - L2 * forearm_dirs   # (N, 3)
+        elbow_dists = np.linalg.norm(computed_elbows - shoulder_joint, axis=1)
+        rms = float(np.sqrt(np.mean((elbow_dists - L1) ** 2)))
+
+        return L1, L2, rms
+
+    # ------------------------------------------------------------------
+    # Sample collection
+    # ------------------------------------------------------------------
 
     def _collect_samples_timed(self, duration_sec: float) -> list:
-        """Collect all unique pose samples during a timed sweep."""
         import time
         samples = []
         last_stamp = None
@@ -333,24 +336,9 @@ class CalibrationNode(Node):
         print(f' done ({len(samples)} samples)')
         return samples
 
-    def _average_pose(self, samples: list):
-        """
-        Returns (mean_position [x,y,z], mean_quaternion [w,x,y,z]).
-        Quaternion average: mean the components then re-normalise
-        (valid for small orientation spread, as in a held-still pose).
-        """
-        pos = [
-            sum(s.pose.position.x for s in samples) / len(samples),
-            sum(s.pose.position.y for s in samples) / len(samples),
-            sum(s.pose.position.z for s in samples) / len(samples),
-        ]
-        q = np.array([
-            [s.pose.orientation.w, s.pose.orientation.x,
-             s.pose.orientation.y, s.pose.orientation.z]
-            for s in samples
-        ]).mean(axis=0)
-        q /= np.linalg.norm(q)
-        return pos, q.tolist()
+    # ------------------------------------------------------------------
+    # Sphere fit
+    # ------------------------------------------------------------------
 
     def _fit_sphere(self, samples: list):
         """
@@ -403,14 +391,6 @@ class CalibrationNode(Node):
 # -----------------------------------------------------------------------
 
 def load_calibration() -> dict:
-    """
-    Load calibration from the YAML file.
-
-        from remote_control.calibration_node import load_calibration
-        cal = load_calibration()
-        upper_arm = cal['upper_arm_length_m']
-        forearm   = cal['forearm_length_m']
-    """
     if not os.path.exists(CALIBRATION_FILE):
         raise FileNotFoundError(
             f'Calibration file not found at {CALIBRATION_FILE}. '
@@ -424,7 +404,7 @@ def load_calibration() -> dict:
 # -----------------------------------------------------------------------
 
 def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
-    """Quaternion [w, x, y, z] → 3x3 rotation matrix (local → world)."""
+    """Quaternion [w, x, y, z] → 3×3 rotation matrix (local → world)."""
     q = q / np.linalg.norm(q)
     w, x, y, z = q
     return np.array([
