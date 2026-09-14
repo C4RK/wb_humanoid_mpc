@@ -135,8 +135,9 @@ class RetargetingNode(Node):
                 f'z={self.shoulder_offset[2]*100:.1f} cm'
             )
 
-            # Frame alignment: build rotation from transmitter frame to
-            # robot-aligned frame where "arm hanging down" = [0, 0, -1].
+            # ── Correction 1: vertical tilt ──────────────────────────────
+            # Build R1 that maps arm_down_hat → [0, 0, -1].
+            # This fixes the roll offset when arm hangs straight down.
             arm_down_raw = np.array([
                 cal.get('arm_down_hat_x', 0.0),
                 cal.get('arm_down_hat_y', 0.0),
@@ -146,14 +147,54 @@ class RetargetingNode(Node):
             if norm < 0.1:
                 arm_down_raw = np.array([0.0, 0.0, -1.0])
             arm_down = arm_down_raw / np.linalg.norm(arm_down_raw)
-            self.R_align = _rotation_between(arm_down,
-                                             np.array([0.0, 0.0, -1.0]))
+            R1 = _rotation_between(arm_down, np.array([0.0, 0.0, -1.0]))
+
             roll_offset = math.degrees(
                 math.asin(float(np.clip(arm_down[1], -1.0, 1.0))))
             self.get_logger().info(
-                f'Frame alignment: arm_down=[{arm_down[0]:+.3f},{arm_down[1]:+.3f},'
-                f'{arm_down[2]:+.3f}], correcting roll offset {roll_offset:+.1f}°'
+                f'Vertical correction: arm_down=[{arm_down[0]:+.3f},'
+                f'{arm_down[1]:+.3f},{arm_down[2]:+.3f}]  '
+                f'→ correcting {roll_offset:+.1f}° vertical tilt'
             )
+
+            # ── Correction 2: horizontal rotation ────────────────────────
+            # After R1, the "arm forward" direction may still have a Y
+            # component (roll error when arm is raised forward).
+            # Build R2, a rotation around the vertical axis (Z after R1),
+            # that eliminates that Y component.
+            arm_fwd_key = cal.get('arm_forward_hat_x')  # None if old calibration
+            if arm_fwd_key is not None:
+                arm_fwd_raw = np.array([
+                    cal['arm_forward_hat_x'],
+                    cal['arm_forward_hat_y'],
+                    cal['arm_forward_hat_z'],
+                ])
+                arm_fwd_raw /= np.linalg.norm(arm_fwd_raw)
+                fwd_after_R1 = R1 @ arm_fwd_raw   # forward in partially-aligned frame
+                fxy = fwd_after_R1[:2]             # XY projection
+                fxy_norm = float(np.linalg.norm(fxy))
+                if fxy_norm > 0.1:
+                    theta = math.atan2(float(fxy[1]), float(fxy[0]))
+                    ct, st = math.cos(theta), math.sin(theta)
+                    R2 = np.array([[ ct, st, 0.0],
+                                   [-st, ct, 0.0],
+                                   [0.0, 0.0, 1.0]])
+                    self.get_logger().info(
+                        f'Horizontal correction: {math.degrees(theta):+.1f}° '
+                        f'rotation around vertical axis'
+                    )
+                else:
+                    R2 = np.eye(3)
+                    self.get_logger().warn(
+                        'arm_forward direction is nearly vertical — '
+                        'horizontal correction skipped.')
+            else:
+                R2 = np.eye(3)
+                self.get_logger().warn(
+                    'No arm_forward_hat in calibration file. '
+                    'Re-run calibration (now 3 steps) to fix forward-raise roll error.')
+
+            self.R_align = R2 @ R1
         except FileNotFoundError as e:
             self.get_logger().fatal(str(e))
             raise

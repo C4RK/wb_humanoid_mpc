@@ -197,24 +197,38 @@ class CalibrationNode(Node):
         input('Press ENTER, then start moving...')
 
         samples_1 = self._collect_samples_timed(SWEEP_SECONDS_FREE)
-        L1, L2, rms_elbow = self._solve_arm_lengths_simultaneous(
+        # ── Primary solve: constrained 1D using sphere radius ──────────
+        # Enforcing L1 + L2 = sphere_radius eliminates the slope/intercept
+        # correlation that causes L1 and L2 to trade off between sessions.
+        L1, L2, rms_elbow = self._solve_arm_lengths_constrained(
+            samples_1, shoulder_joint, sphere_radius)
+
+        # ── Fallback: unconstrained 2D solve ────────────────────────────
+        L1_2d, L2_2d, rms_2d = self._solve_arm_lengths_simultaneous(
             samples_1, shoulder_joint)
 
-        if L1 is None:
-            print('\n[ERROR] Linear solve failed — no valid solution found.')
-            print('  Likely cause: elbow angle did not vary enough.')
-            print('  Please try again and make sure to bend/straighten the elbow.')
+        if L1 is None and L1_2d is None:
+            print('\n[ERROR] Both solvers failed — elbow angle may not have varied.')
+            print('  Please try again and bend/straighten the elbow continuously.')
             return
+
+        if L1 is None:
+            print('\n[NOTE] Constrained solve failed; using unconstrained solve.')
+            L1, L2, rms_elbow = L1_2d, L2_2d, rms_2d
 
         computed_total = L1 + L2
         crosscheck = abs(computed_total - sphere_radius)
+        split_diff = abs((L1 - L1_2d)) if L1_2d is not None else float('inf')
 
         print(f'\n  → upper_arm_length (L1): {L1*100:.1f} cm')
         print(f'  → forearm_length   (L2): {L2*100:.1f} cm')
-        print(f'  → L1 + L2:              {computed_total*100:.1f} cm')
-        print(f'  → Sphere radius (Step 0): {sphere_radius*100:.1f} cm  '
-              f'(cross-check, diff = {crosscheck*100:.1f} cm)')
+        print(f'  → L1 + L2:              {computed_total*100:.1f} cm  '
+              f'(anchored to sphere radius)')
+        print(f'  → Sphere radius (Step 0): {sphere_radius*100:.1f} cm')
         print(f'  → Elbow residual RMS:    {rms_elbow*100:.2f} cm')
+        if L1_2d is not None:
+            print(f'  → Cross-check (2D solve):  L1={L1_2d*100:.1f} cm, '
+                  f'L2={L2_2d*100:.1f} cm  (split diff {split_diff*100:.1f} cm)')
 
         if rms_elbow > SOLVE_RMS_TOLERANCE_M:
             print(f'\n[WARNING] Elbow residual RMS ({rms_elbow*100:.2f} cm) is high.')
@@ -226,10 +240,11 @@ class CalibrationNode(Node):
                 print('[Calibration] Cancelled. Please try Step 1 again.')
                 return
 
-        if crosscheck > CROSSCHECK_TOLERANCE_M:
-            print(f'\n[NOTE] L1+L2 vs sphere radius differ by {crosscheck*100:.1f} cm.')
-            print('  The elbow may have been slightly bent during Step 0.')
-            print('  L1 and L2 from the linear solve are independent of this.')
+        if split_diff > 0.03 and L1_2d is not None:
+            print(f'\n[NOTE] Constrained and unconstrained solvers differ by '
+                  f'{split_diff*100:.1f} cm in L1.')
+            print('  This often means the elbow was not varied enough in Step 1.')
+            print('  Using the constrained result (more stable).')
 
         # Sanity check on individual values
         for name, val, lo, hi in [('upper arm', L1, 0.15, 0.45),
@@ -256,35 +271,73 @@ class CalibrationNode(Node):
         input('Press ENTER, then hold arm straight down...')
 
         samples_2 = self._collect_samples_timed(5.0)
-        arm_down_hat = self._compute_arm_down_hat(
-            samples_2, shoulder_joint, L2)
+        arm_down_hat = self._compute_elbow_hat(
+            samples_2, shoulder_joint, L2,
+            label='arm-down', fallback=np.array([0.0, 0.0, -1.0]))
 
         roll_offset = math.degrees(
             math.asin(float(np.clip(arm_down_hat[1], -1.0, 1.0))))
         print(f'\n  → Arm-down direction in transmitter frame:')
         print(f'    [{arm_down_hat[0]:+.4f}, {arm_down_hat[1]:+.4f}, '
               f'{arm_down_hat[2]:+.4f}]')
-        print(f'  → Transmitter tilt (roll offset to correct): '
-              f'{roll_offset:+.1f}°')
+        print(f'  → Vertical tilt to correct: {roll_offset:+.1f}°')
+
+        # ================================================================
+        # STEP 3 — Forward reference: arm raised straight forward
+        # ================================================================
+        print('=' * 60)
+        print('STEP 3: Forward reference — align the horizontal frame')
+        print()
+        print('  Raise your arm STRAIGHT FORWARD to roughly shoulder height.')
+        print('  Keep the elbow roughly straight.')
+        print('  Press ENTER, then hold the pose still for 5 seconds.')
+        print()
+        print('  WHY: the transmitter may be rotated horizontally on your')
+        print('       shoulder.  This corrects the roll error that appears')
+        print('       when the arm is raised forward.')
+        print('=' * 60)
+        input('Press ENTER, then hold arm straight forward...')
+
+        samples_3 = self._collect_samples_timed(5.0)
+        arm_forward_hat = self._compute_elbow_hat(
+            samples_3, shoulder_joint, L2,
+            label='arm-forward', fallback=None)
+
+        if arm_forward_hat is None:
+            print('[WARNING] Could not determine forward direction — '
+                  'horizontal correction will be skipped.')
+            arm_forward_hat = np.array([1.0, 0.0, 0.0])  # neutral fallback
+
+        # Report the horizontal angle (how far the transmitter X-axis is
+        # from "forward" in the robot-aligned XY plane)
+        # We use a quick preview: apply the arm-down correction and check XY angle.
+        R_preview = _rotation_between(arm_down_hat, np.array([0.0, 0.0, -1.0]))
+        fwd_aligned = R_preview @ arm_forward_hat
+        horiz_angle = math.degrees(
+            math.atan2(float(fwd_aligned[1]), float(fwd_aligned[0])))
+        print(f'\n  → Arm-forward direction in transmitter frame:')
+        print(f'    [{arm_forward_hat[0]:+.4f}, {arm_forward_hat[1]:+.4f}, '
+              f'{arm_forward_hat[2]:+.4f}]')
+        print(f'  → Horizontal rotation to correct: {horiz_angle:+.1f}°')
 
         self._save_calibration(L1, L2, computed_total, shoulder_joint,
-                               arm_down_hat)
+                               arm_down_hat, arm_forward_hat)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
         print('[Calibration] You can now start retargeting_node.')
 
     # ------------------------------------------------------------------
-    # Arm-down reference direction
+    # Reference direction helpers
     # ------------------------------------------------------------------
 
-    def _compute_arm_down_hat(self, samples, shoulder_joint, L2):
+    def _compute_elbow_hat(self, samples, shoulder_joint, L2,
+                           label: str, fallback: np.ndarray) -> np.ndarray:
         """
-        Compute the unit vector pointing from shoulder toward the wrist
-        when the arm hangs straight down.
+        Compute the mean unit vector from shoulder to elbow for a held pose.
 
-        For each sample: E_i = W_i − L2 · f_i  (elbow position in shoulder frame)
-        Average the elbow vectors and normalise.
+        E_i = (W_i − shoulder_joint) − L2 · f_i   (elbow in shoulder-centred frame)
 
-        Returns shape (3,) unit vector.
+        Returns a normalised shape-(3,) vector, or `fallback` if the result
+        is too short (arm not held in the expected position).
         """
         positions = np.array([
             [s.pose.position.x, s.pose.position.y, s.pose.position.z]
@@ -298,15 +351,15 @@ class CalibrationNode(Node):
         forearm_dirs = np.array([
             _quat_to_matrix(q) @ FOREARM_LOCAL_AXIS for q in quats
         ])
-        V = positions - shoulder_joint          # wrist in shoulder-centred frame
-        E_vecs = V - L2 * forearm_dirs          # elbow in shoulder-centred frame
+        V     = positions - shoulder_joint          # wrist in shoulder-centred frame
+        E_vecs = V - L2 * forearm_dirs              # elbow in shoulder-centred frame
         E_mean = np.mean(E_vecs, axis=0)
-        norm = np.linalg.norm(E_mean)
+        norm   = np.linalg.norm(E_mean)
         if norm < 0.05:
             self.get_logger().warn(
-                'Arm-down reference is very short — arm may not be hanging down. '
-                'Falling back to [0, 0, -1].')
-            return np.array([0.0, 0.0, -1.0])
+                f'{label} reference vector is very short ({norm*100:.1f} cm) — '
+                f'arm may not have been in the correct pose.  Using fallback.')
+            return fallback
         return E_mean / norm
 
     # ------------------------------------------------------------------
@@ -379,6 +432,69 @@ class CalibrationNode(Node):
 
         return L1, L2, rms
 
+    def _solve_arm_lengths_constrained(self, samples, shoulder_joint, L_total):
+        """
+        Solve for L2 (and L1 = L_total − L2) using the sphere radius as a
+        hard constraint on the total arm length.
+
+        WHY: the unconstrained 2D solve finds [L2, u=L1²−L2²] together.
+        Slope (L2) and intercept (u) are negatively correlated in the
+        regression — if L2 is overestimated, u drops by the same amount,
+        keeping L1²=L2²+u roughly constant.  This makes L1 and L2
+        individually unstable between sessions even though L1+L2 is stable.
+
+        Fixing L1+L2 = sphere_radius (reliable from Step 0) eliminates the
+        correlation and reduces the problem to a 1-D least squares in L2:
+
+          |V − L2·f|² = (L_total − L2)²
+          ↓ expand both sides, cancel L2² terms
+          L2 · 2·(V·f − L_total) = |V|² − L_total²
+
+        Stack one row per pose → 1-D normal equations → unique L2.
+
+        Returns (L1, L2, rms_m) or (None, None, inf) on failure.
+        """
+        positions = np.array([
+            [s.pose.position.x, s.pose.position.y, s.pose.position.z]
+            for s in samples
+        ])
+        quats = np.array([
+            [s.pose.orientation.w, s.pose.orientation.x,
+             s.pose.orientation.y, s.pose.orientation.z]
+            for s in samples
+        ])
+        forearm_dirs = np.array([
+            _quat_to_matrix(q) @ FOREARM_LOCAL_AXIS for q in quats
+        ])
+
+        V     = positions - shoulder_joint
+        Vdotf = np.sum(V * forearm_dirs, axis=1)
+        V_sq  = np.sum(V ** 2,           axis=1)
+
+        # 1-D system: a_i * L2 = b_i
+        a = 2.0 * (Vdotf - L_total)   # (N,) — coefficient of L2
+        b = V_sq - L_total ** 2        # (N,) — right-hand side
+
+        # Normal equation for 1-D least squares: L2 = (aᵀb) / (aᵀa)
+        AtA = float(np.dot(a, a))
+        Atb = float(np.dot(a, b))
+
+        if AtA < 1e-6:
+            return None, None, float('inf')
+
+        L2 = Atb / AtA
+        L1 = L_total - L2
+
+        if L2 <= 0.05 or L1 <= 0.05:
+            return None, None, float('inf')
+
+        # RMS of elbow-distance residuals (interpretable: metres)
+        computed_elbows = positions - L2 * forearm_dirs
+        elbow_dists = np.linalg.norm(computed_elbows - shoulder_joint, axis=1)
+        rms = float(np.sqrt(np.mean((elbow_dists - L1) ** 2)))
+
+        return L1, L2, rms
+
     # ------------------------------------------------------------------
     # Sample collection
     # ------------------------------------------------------------------
@@ -432,7 +548,7 @@ class CalibrationNode(Node):
     # ------------------------------------------------------------------
 
     def _save_calibration(self, upper_arm_m, forearm_m, total_m,
-                          shoulder_joint, arm_down_hat):
+                          shoulder_joint, arm_down_hat, arm_forward_hat):
         os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
         data = {
             'calibration': {
@@ -442,12 +558,19 @@ class CalibrationNode(Node):
                 'shoulder_offset_x_m': round(float(shoulder_joint[0]), 4),
                 'shoulder_offset_y_m': round(float(shoulder_joint[1]), 4),
                 'shoulder_offset_z_m': round(float(shoulder_joint[2]), 4),
-                # Unit vector pointing from shoulder toward wrist when arm
-                # hangs straight down, in the EM transmitter frame.
-                # Used by retargeting_node to correct for transmitter tilt.
+                # Unit vector from shoulder toward elbow when arm hangs straight
+                # down, in the EM transmitter frame.
+                # Used by retargeting_node to correct for vertical tilt.
                 'arm_down_hat_x': round(float(arm_down_hat[0]), 4),
                 'arm_down_hat_y': round(float(arm_down_hat[1]), 4),
                 'arm_down_hat_z': round(float(arm_down_hat[2]), 4),
+                # Unit vector from shoulder toward elbow when arm is raised
+                # straight forward, in the EM transmitter frame.
+                # Used to correct for horizontal (azimuthal) rotation of the
+                # transmitter — fixes the roll error on forward raises.
+                'arm_forward_hat_x': round(float(arm_forward_hat[0]), 4),
+                'arm_forward_hat_y': round(float(arm_forward_hat[1]), 4),
+                'arm_forward_hat_z': round(float(arm_forward_hat[2]), 4),
                 'calibrated_at': datetime.now(timezone.utc).isoformat(),
             }
         }
@@ -486,6 +609,31 @@ def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
         [    2*(x*y + z*w),  1 - 2*(x*x + z*z), 2*(y*z - x*w)],
         [    2*(x*z - y*w),  2*(y*z + x*w),     1 - 2*(x*x + y*y)],
     ])
+
+
+def _rotation_between(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    3×3 rotation matrix R such that R @ a ≈ b (both unit vectors).
+    Uses Rodrigues' rotation formula.
+    """
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v = np.cross(a, b)
+    s = float(np.linalg.norm(v))
+    c = float(np.dot(a, b))
+    if s < 1e-8:
+        if c > 0:
+            return np.eye(3)
+        perp = np.array([1.0, 0.0, 0.0])
+        if abs(float(np.dot(perp, a))) > 0.9:
+            perp = np.array([0.0, 1.0, 0.0])
+        ax = np.cross(a, perp)
+        ax /= np.linalg.norm(ax)
+        return 2.0 * np.outer(ax, ax) - np.eye(3)
+    vx = np.array([[   0, -v[2],  v[1]],
+                   [v[2],     0, -v[0]],
+                   [-v[1],  v[0],    0]])
+    return np.eye(3) + vx + vx @ vx * ((1.0 - c) / (s * s))
 
 
 def main(args=None):
