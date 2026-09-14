@@ -52,7 +52,7 @@ from geometry_msgs.msg import PoseStamped
 from datetime import datetime, timezone
 
 
-CALIBRATION_FILE = os.path.expanduser('~/.ros/wmet_calibration.yaml')
+CALIBRATION_FILE = '/wb_humanoid_mpc_ws/src/wb_humanoid_mpc/humanoid_nmpc/remote_control/config/wmet_calibration.yaml'
 
 # Step 0 sweep duration (seconds).
 SWEEP_SECONDS_SHOULDER = 8.0
@@ -238,9 +238,76 @@ class CalibrationNode(Node):
                 print(f'\n[WARNING] {name} = {val*100:.1f} cm is outside the '
                       f'typical range ({lo*100:.0f}–{hi*100:.0f} cm).')
 
-        self._save_calibration(L1, L2, computed_total, shoulder_joint)
+        # ================================================================
+        # STEP 2 — Rest pose: arm hanging straight down
+        # ================================================================
+        print('=' * 60)
+        print('STEP 2: Rest pose — record the "arm down" direction')
+        print()
+        print('  Let your arm hang STRAIGHT DOWN, relaxed at your side.')
+        print('  Elbow roughly straight (not bent).')
+        print('  Press ENTER, then hold still for 5 seconds.')
+        print()
+        print('  WHY: the EM transmitter may not sit perfectly vertical')
+        print('       on your shoulder.  This step records the true')
+        print('       "arm hanging down" direction so the retargeting')
+        print('       can compensate for any tilt — fixing the roll offset.')
+        print('=' * 60)
+        input('Press ENTER, then hold arm straight down...')
+
+        samples_2 = self._collect_samples_timed(5.0)
+        arm_down_hat = self._compute_arm_down_hat(
+            samples_2, shoulder_joint, L2)
+
+        roll_offset = math.degrees(
+            math.asin(float(np.clip(arm_down_hat[1], -1.0, 1.0))))
+        print(f'\n  → Arm-down direction in transmitter frame:')
+        print(f'    [{arm_down_hat[0]:+.4f}, {arm_down_hat[1]:+.4f}, '
+              f'{arm_down_hat[2]:+.4f}]')
+        print(f'  → Transmitter tilt (roll offset to correct): '
+              f'{roll_offset:+.1f}°')
+
+        self._save_calibration(L1, L2, computed_total, shoulder_joint,
+                               arm_down_hat)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
         print('[Calibration] You can now start retargeting_node.')
+
+    # ------------------------------------------------------------------
+    # Arm-down reference direction
+    # ------------------------------------------------------------------
+
+    def _compute_arm_down_hat(self, samples, shoulder_joint, L2):
+        """
+        Compute the unit vector pointing from shoulder toward the wrist
+        when the arm hangs straight down.
+
+        For each sample: E_i = W_i − L2 · f_i  (elbow position in shoulder frame)
+        Average the elbow vectors and normalise.
+
+        Returns shape (3,) unit vector.
+        """
+        positions = np.array([
+            [s.pose.position.x, s.pose.position.y, s.pose.position.z]
+            for s in samples
+        ])
+        quats = np.array([
+            [s.pose.orientation.w, s.pose.orientation.x,
+             s.pose.orientation.y, s.pose.orientation.z]
+            for s in samples
+        ])
+        forearm_dirs = np.array([
+            _quat_to_matrix(q) @ FOREARM_LOCAL_AXIS for q in quats
+        ])
+        V = positions - shoulder_joint          # wrist in shoulder-centred frame
+        E_vecs = V - L2 * forearm_dirs          # elbow in shoulder-centred frame
+        E_mean = np.mean(E_vecs, axis=0)
+        norm = np.linalg.norm(E_mean)
+        if norm < 0.05:
+            self.get_logger().warn(
+                'Arm-down reference is very short — arm may not be hanging down. '
+                'Falling back to [0, 0, -1].')
+            return np.array([0.0, 0.0, -1.0])
+        return E_mean / norm
 
     # ------------------------------------------------------------------
     # Core solver
@@ -364,7 +431,8 @@ class CalibrationNode(Node):
     # YAML load / save
     # ------------------------------------------------------------------
 
-    def _save_calibration(self, upper_arm_m, forearm_m, total_m, shoulder_joint):
+    def _save_calibration(self, upper_arm_m, forearm_m, total_m,
+                          shoulder_joint, arm_down_hat):
         os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
         data = {
             'calibration': {
@@ -374,6 +442,12 @@ class CalibrationNode(Node):
                 'shoulder_offset_x_m': round(float(shoulder_joint[0]), 4),
                 'shoulder_offset_y_m': round(float(shoulder_joint[1]), 4),
                 'shoulder_offset_z_m': round(float(shoulder_joint[2]), 4),
+                # Unit vector pointing from shoulder toward wrist when arm
+                # hangs straight down, in the EM transmitter frame.
+                # Used by retargeting_node to correct for transmitter tilt.
+                'arm_down_hat_x': round(float(arm_down_hat[0]), 4),
+                'arm_down_hat_y': round(float(arm_down_hat[1]), 4),
+                'arm_down_hat_z': round(float(arm_down_hat[2]), 4),
                 'calibrated_at': datetime.now(timezone.utc).isoformat(),
             }
         }

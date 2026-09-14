@@ -33,7 +33,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 
-from remote_control.calibration_node import load_calibration
+from remote_control.calibration_node import load_calibration, CALIBRATION_FILE
 
 
 # ---------------------------------------------------------------------------
@@ -134,6 +134,26 @@ class RetargetingNode(Node):
                 f'y={self.shoulder_offset[1]*100:.1f} cm, '
                 f'z={self.shoulder_offset[2]*100:.1f} cm'
             )
+
+            # Frame alignment: build rotation from transmitter frame to
+            # robot-aligned frame where "arm hanging down" = [0, 0, -1].
+            arm_down_raw = np.array([
+                cal.get('arm_down_hat_x', 0.0),
+                cal.get('arm_down_hat_y', 0.0),
+                cal.get('arm_down_hat_z', -1.0),
+            ])
+            norm = np.linalg.norm(arm_down_raw)
+            if norm < 0.1:
+                arm_down_raw = np.array([0.0, 0.0, -1.0])
+            arm_down = arm_down_raw / np.linalg.norm(arm_down_raw)
+            self.R_align = _rotation_between(arm_down,
+                                             np.array([0.0, 0.0, -1.0]))
+            roll_offset = math.degrees(
+                math.asin(float(np.clip(arm_down[1], -1.0, 1.0))))
+            self.get_logger().info(
+                f'Frame alignment: arm_down=[{arm_down[0]:+.3f},{arm_down[1]:+.3f},'
+                f'{arm_down[2]:+.3f}], correcting roll offset {roll_offset:+.1f}°'
+            )
         except FileNotFoundError as e:
             self.get_logger().fatal(str(e))
             raise
@@ -180,6 +200,13 @@ class RetargetingNode(Node):
         for i, state_idx in enumerate(LEFT_ARM_INDICES):
             self._joint_state[state_idx] = angles[i]
 
+        # Diagnostic: log angles at 1 Hz so we can verify correctness
+        self.get_logger().info(
+            f'pitch={math.degrees(angles[0]):+.1f}° roll={math.degrees(angles[1]):+.1f}°'
+            f' yaw={math.degrees(angles[2]):+.1f}° elbow={math.degrees(angles[3]):+.1f}°',
+            throttle_duration_sec=1.0
+        )
+
         # Publish  — C++ subscriber picks this up and calls setTargetJointState()
         out = JointState()
         out.header.stamp = msg.header.stamp  # keep original timestamp
@@ -224,10 +251,20 @@ class RetargetingNode(Node):
         if elbow_dist > self.L1 * 1.15:
             self.get_logger().warn(
                 f'Elbow distance {elbow_dist*100:.1f} cm > upper arm {self.L1*100:.1f} cm'
-                ' — unreachable, skipping.',
+                f' — unreachable, skipping.'
+                f'  W=[{W[0]*100:.1f},{W[1]*100:.1f},{W[2]*100:.1f}] cm'
+                f'  f=[{forearm_dir[0]:+.3f},{forearm_dir[1]:+.3f},{forearm_dir[2]:+.3f}]'
+                f'  E=[{E[0]*100:.1f},{E[1]*100:.1f},{E[2]*100:.1f}] cm',
                 throttle_duration_sec=1.0
             )
             return None
+
+        # Rotate E and forearm_dir from transmitter frame into robot-aligned
+        # frame (where "arm hanging down" = [0, 0, -1]).
+        # Magnitudes are preserved (R_align is orthogonal), so elbow_dist is
+        # the same before and after — only directions change.
+        E          = self.R_align @ E
+        forearm_dir = self.R_align @ forearm_dir
 
         E_hat = E / (elbow_dist + 1e-9)  # unit vector: shoulder → elbow direction
 
@@ -302,22 +339,35 @@ class RetargetingNode(Node):
         # ----------------------------------------------------------------
         world_down = np.array([0.0, 0.0, -1.0])
 
-        # Reference direction: perpendicular to upper arm, in the gravity plane
-        ref = world_down - np.dot(world_down, E_hat) * E_hat
-        ref_norm = np.linalg.norm(ref)
-
-        # Forearm component perpendicular to upper arm
-        fp = forearm_dir - np.dot(forearm_dir, E_hat) * E_hat
-        fp_norm = np.linalg.norm(fp)
-
-        if ref_norm > 0.05 and fp_norm > 0.05:
-            ref = ref / ref_norm
-            fp  = fp  / fp_norm
-            cross = np.cross(ref, fp)
-            shoulder_yaw = math.atan2(float(np.dot(cross, E_hat)), float(np.dot(ref, fp)))
-        else:
-            # Singular: arm pointing straight down or forearm parallel to upper arm
+        # Shoulder yaw is the axial twist of the upper arm around its own axis.
+        # It is only measurable when the arm is NOT pointing straight down:
+        # if the arm points down, every twist looks identical.
+        #
+        # Singularity guard: if the arm is within ~20° of vertical, yaw is
+        # ill-conditioned — the reference vector approaches zero, atan2 gets
+        # garbage inputs, and the value hits the joint limit (-150°).
+        # Return 0 in that region (arm-down is the natural rest position anyway).
+        cos_to_down = float(np.dot(E_hat, world_down))  # 1.0 = pointing straight down
+        if cos_to_down > math.cos(math.radians(20)):    # within 20° of vertical
             shoulder_yaw = 0.0
+        else:
+            # Reference direction: perpendicular to upper arm, in the gravity plane
+            ref = world_down - np.dot(world_down, E_hat) * E_hat
+            ref_norm = np.linalg.norm(ref)
+
+            # Forearm component perpendicular to upper arm
+            fp = forearm_dir - np.dot(forearm_dir, E_hat) * E_hat
+            fp_norm = np.linalg.norm(fp)
+
+            if ref_norm > 0.15 and fp_norm > 0.05:
+                ref = ref / ref_norm
+                fp  = fp  / fp_norm
+                cross = np.cross(ref, fp)
+                shoulder_yaw = math.atan2(float(np.dot(cross, E_hat)),
+                                          float(np.dot(ref, fp)))
+            else:
+                # Forearm parallel to upper arm — yaw undefined
+                shoulder_yaw = 0.0
 
         # ----------------------------------------------------------------
         # Step 6 — Apply joint limits
@@ -334,6 +384,35 @@ class RetargetingNode(Node):
 # ---------------------------------------------------------------------------
 # Math utilities
 # ---------------------------------------------------------------------------
+
+def _rotation_between(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    3×3 rotation matrix R such that R @ a = b, where a and b are unit vectors.
+    Uses Rodrigues' rotation formula.
+
+    Used to build the frame-alignment correction:
+        R_align = _rotation_between(arm_down_hat, [0, 0, -1])
+    """
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v = np.cross(a, b)
+    s = float(np.linalg.norm(v))   # sin of angle
+    c = float(np.dot(a, b))        # cos of angle
+    if s < 1e-8:
+        if c > 0:
+            return np.eye(3)       # already aligned
+        # Anti-parallel: 180° rotation around any perpendicular axis
+        perp = np.array([1.0, 0.0, 0.0])
+        if abs(float(np.dot(perp, a))) > 0.9:
+            perp = np.array([0.0, 1.0, 0.0])
+        ax = np.cross(a, perp)
+        ax = ax / np.linalg.norm(ax)
+        return 2.0 * np.outer(ax, ax) - np.eye(3)
+    vx = np.array([[   0, -v[2],  v[1]],
+                   [v[2],     0, -v[0]],
+                   [-v[1], v[0],    0]])
+    return np.eye(3) + vx + vx @ vx * ((1.0 - c) / (s * s))
+
 
 def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
     """

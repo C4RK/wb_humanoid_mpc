@@ -1,0 +1,11 @@
+calibration:
+  arm_down_hat_x: -0.0682
+  arm_down_hat_y: 0.5978
+  arm_down_hat_z: -0.7987
+  calibrated_at: '2026-09-14T16:20:47.941440+00:00'
+  forearm_length_m: 0.2585
+  shoulder_offset_x_m: 0.0089
+  shoulder_offset_y_m: 0.0183
+  shoulder_offset_z_m: -0.0717
+  total_arm_length_m: 0.5481
+  upper_arm_length_m: 0.2896
