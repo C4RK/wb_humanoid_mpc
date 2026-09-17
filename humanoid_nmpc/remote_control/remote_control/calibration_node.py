@@ -352,8 +352,13 @@ class CalibrationNode(Node):
         print(f'    (subtracted from shoulder_yaw in retargeting; '
               f'arm-forward pose will read 0°)')
 
+        wrist_roll_ref_quat = self._compute_wrist_roll_ref_quat(samples_3)
+        print(f'  → Wrist roll reference quaternion saved '
+              f'(Step 3 pose = wrist_roll 0° on robot)')
+
         self._save_calibration(L1, L2, computed_total, shoulder_joint,
-                               arm_down_hat, arm_forward_hat, yaw_offset)
+                               arm_down_hat, arm_forward_hat, yaw_offset,
+                               wrist_roll_ref_quat)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
         print('[Calibration] You can now start retargeting_node.')
 
@@ -393,6 +398,28 @@ class CalibrationNode(Node):
                 f'arm may not have been in the correct pose.  Using fallback.')
             return fallback
         return E_mean / norm
+
+    def _compute_wrist_roll_ref_quat(self, samples_3) -> list:
+        """
+        Compute the mean sensor quaternion from Step 3 samples.
+        Saved as the wrist_roll reference: the retargeting measures forearm
+        axial rotation (pronation/supination) relative to this pose, mapping
+        it to left_wrist_roll_joint.  Step 3 pose → wrist_roll = 0 on robot.
+        """
+        if not samples_3:
+            return [1.0, 0.0, 0.0, 0.0]
+        qs = np.array([
+            [s.pose.orientation.w, s.pose.orientation.x,
+             s.pose.orientation.y, s.pose.orientation.z]
+            for s in samples_3
+        ], dtype=float)
+        q0 = qs[0].copy()
+        for i in range(1, len(qs)):
+            if np.dot(qs[i], q0) < 0.0:
+                qs[i] = -qs[i]
+        q_mean = np.mean(qs, axis=0)
+        q_mean /= np.linalg.norm(q_mean)
+        return [round(float(v), 6) for v in q_mean]
 
     def _compute_yaw_offset(self, samples, shoulder_joint, L2, R_align) -> float:
         """
@@ -636,7 +663,8 @@ class CalibrationNode(Node):
 
     def _save_calibration(self, upper_arm_m, forearm_m, total_m,
                           shoulder_joint, arm_down_hat, arm_forward_hat,
-                          yaw_offset: float = 0.0):
+                          yaw_offset: float = 0.0,
+                          wrist_roll_ref_quat: list = None):
         os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
         data = {
             'calibration': {
@@ -664,6 +692,11 @@ class CalibrationNode(Node):
                 # axis.  Subtracted from every yaw reading in retargeting so that
                 # the calibration pose gives yaw = 0°.
                 'yaw_offset': round(float(yaw_offset), 4),
+                # Sensor quaternion [w,x,y,z] at Step 3 (arm forward, wrist neutral).
+                # Used as the zero-reference for wrist_roll tracking: the retargeting
+                # measures how much the forearm has rotated around its own axis
+                # (pronation/supination) relative to this pose.
+                'wrist_roll_ref_quat': wrist_roll_ref_quat if wrist_roll_ref_quat else [1.0, 0.0, 0.0, 0.0],
                 'calibrated_at': datetime.now(timezone.utc).isoformat(),
             }
         }

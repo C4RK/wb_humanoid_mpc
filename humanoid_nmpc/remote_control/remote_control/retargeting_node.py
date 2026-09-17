@@ -37,7 +37,7 @@ from remote_control.calibration_node import load_calibration, CALIBRATION_FILE
 
 
 # ---------------------------------------------------------------------------
-# MPC joint state layout  (21 joints total, wrist_roll joints are FIXED → excluded)
+# MPC joint state layout  (22 joints total, only right_wrist_roll is FIXED)
 #
 #  Index  Joint name
 #  -----  -----------------------------------------------
@@ -48,25 +48,27 @@ from remote_control.calibration_node import load_calibration, CALIBRATION_FILE
 #   14    left_shoulder_roll_joint    ← controlled by EM tracker
 #   15    left_shoulder_yaw_joint     ← controlled by EM tracker
 #   16    left_elbow_joint            ← controlled by EM tracker
-#   17    right_shoulder_pitch_joint
-#   18    right_shoulder_roll_joint
-#   19    right_shoulder_yaw_joint
-#   20    right_elbow_joint
+#   17    left_wrist_roll_joint       ← controlled by EM tracker (pronation/supination)
+#   18    right_shoulder_pitch_joint
+#   19    right_shoulder_roll_joint
+#   20    right_shoulder_yaw_joint
+#   21    right_elbow_joint
 #
-#  Note: left_wrist_roll (ref.info idx 17) and right_wrist_roll (ref.info idx 22)
-#  are fixedJointNames → NOT in MPC state → indices shift: right arm is 17-20 here.
+#  Note: right_wrist_roll (ref.info idx 22) is still fixedJointName → excluded.
+#  left_wrist_roll is now tracked → at index 17, right arm shifted to 18-21.
 # ---------------------------------------------------------------------------
 
-LEFT_ARM_INDICES = [13, 14, 15, 16]  # positions in the 21-element MPC joint vector
+LEFT_ARM_INDICES = [13, 14, 15, 16, 17]  # positions in the 22-element MPC joint vector
 
 LEFT_ARM_JOINT_NAMES = [
     'left_shoulder_pitch_joint',
     'left_shoulder_roll_joint',
     'left_shoulder_yaw_joint',
     'left_elbow_joint',
+    'left_wrist_roll_joint',
 ]
 
-# Default MPC joint state (21 joints).
+# Default MPC joint state (22 joints).
 # Values from reference.info defaultJointState — legs in nominal stance, arms at rest.
 DEFAULT_JOINT_STATE = [
     # left leg  (indices 0-5)
@@ -75,11 +77,11 @@ DEFAULT_JOINT_STATE = [
     -0.05, 0.0, 0.0, 0.1, -0.05, 0.0,
     # waist_yaw (index 12)
     0.0,
-    # left arm  (indices 13-16) — overwritten every frame by EM tracker
+    # left arm  (indices 13-17) — overwritten every frame by EM tracker
+    0.0, 0.0, 0.0, 0.0, 0.0,
+    # right arm (indices 18-21) — stays at default
     0.0, 0.0, 0.0, 0.0,
-    # right arm (indices 17-20) — stays at default
-    0.0, 0.0, 0.0, 0.0,
-]  # 21 elements total
+]  # 22 elements total
 
 # Joint limits [min_rad, max_rad] for the left arm.
 # Source: g1_23dof.urdf — use URDF values, not estimates.
@@ -88,6 +90,7 @@ JOINT_LIMITS = {
     'left_shoulder_roll_joint':  (-1.5882, 2.2515),
     'left_shoulder_yaw_joint':   (-2.618,  2.618),
     'left_elbow_joint':          (-1.0472, 2.0944),
+    'left_wrist_roll_joint':     (-1.97222, 1.97222),
 }
 
 # The forearm bone direction in the RECEIVER's local frame.
@@ -204,6 +207,22 @@ class RetargetingNode(Node):
             self.get_logger().info(
                 f'Yaw offset (sensor mounting): {math.degrees(self.yaw_offset):+.1f}°'
             )
+
+            # Wrist roll reference: sensor quaternion at Step 3 (arm forward, wrist neutral).
+            # The retargeting measures forearm rotation (pronation/supination) as the
+            # rotation of the sensor around its own Y-axis (forearm axis) relative to
+            # this reference.  Requires re-calibration to take effect.
+            wrist_roll_ref = cal.get('wrist_roll_ref_quat', None)
+            if wrist_roll_ref:
+                self.R_wrist_roll_ref = _quat_to_matrix(np.array(wrist_roll_ref))
+                self.has_wrist_roll = True
+                self.get_logger().info('Wrist roll reference loaded — pronation/supination active.')
+            else:
+                self.R_wrist_roll_ref = np.eye(3)
+                self.has_wrist_roll = False
+                self.get_logger().warn(
+                    'No wrist_roll_ref_quat in calibration — re-run calibration to enable wrist tracking.'
+                )
         except FileNotFoundError as e:
             self.get_logger().fatal(str(e))
             raise
@@ -253,7 +272,8 @@ class RetargetingNode(Node):
         # Diagnostic: log angles at 1 Hz so we can verify correctness
         self.get_logger().info(
             f'pitch={math.degrees(angles[0]):+.1f}° roll={math.degrees(angles[1]):+.1f}°'
-            f' yaw={math.degrees(angles[2]):+.1f}° elbow={math.degrees(angles[3]):+.1f}°',
+            f' yaw={math.degrees(angles[2]):+.1f}° elbow={math.degrees(angles[3]):+.1f}°'
+            f' wrist={math.degrees(angles[4]):+.1f}°',
             throttle_duration_sec=0.1
         )
 
@@ -269,14 +289,14 @@ class RetargetingNode(Node):
 
     def _compute_joint_angles(self, W: np.ndarray, q: np.ndarray):
         """
-        Maps human arm pose to 4 robot joint angles.
+        Maps human arm pose to 5 robot joint angles.
 
         Args:
             W: wrist position [x,y,z] in shoulder (transmitter) frame, meters
             q: forearm quaternion [w,x,y,z]
 
         Returns:
-            [shoulder_pitch, shoulder_roll, shoulder_yaw, elbow_joint] radians
+            [shoulder_pitch, shoulder_roll, shoulder_yaw, elbow_joint, wrist_roll] radians
             or None if configuration is unreachable.
         """
 
@@ -429,13 +449,34 @@ class RetargetingNode(Node):
                 shoulder_yaw += 2.0 * math.pi
 
         # ----------------------------------------------------------------
-        # Step 6 — Apply joint limits
+        # Step 6 — Wrist roll (forearm axial rotation = pronation / supination)
+        #
+        # Measured as the rotation of the sensor around its own Y-axis (forearm
+        # axis) relative to the Step 3 calibration pose.
+        #
+        # R_rel = R_ref^T @ R_sensor  (rotation in the calibration sensor frame)
+        # If only the wrist has rotated by angle θ:  R_rel = Ry(θ)
+        #   → wrist_roll = atan2(R_rel[0,2], R_rel[0,0])
+        #
+        # When the shoulder has also moved, R_rel has additional components, but
+        # the Y-rotation extraction (atan2 of [0,2] and [0,0] elements) still
+        # gives a good approximation of the forearm twist.
+        # ----------------------------------------------------------------
+        if self.has_wrist_roll:
+            R_rel = self.R_wrist_roll_ref.T @ R
+            wrist_roll = math.atan2(R_rel[0, 2], R_rel[0, 0])
+        else:
+            wrist_roll = 0.0
+
+        # ----------------------------------------------------------------
+        # Step 7 — Apply joint limits
         # ----------------------------------------------------------------
         result = [
             _clamp(shoulder_pitch, *JOINT_LIMITS['left_shoulder_pitch_joint']),
             _clamp(shoulder_roll,  *JOINT_LIMITS['left_shoulder_roll_joint']),
             _clamp(shoulder_yaw,   *JOINT_LIMITS['left_shoulder_yaw_joint']),
             _clamp(elbow_scaled,   *JOINT_LIMITS['left_elbow_joint']),
+            _clamp(wrist_roll,     *JOINT_LIMITS['left_wrist_roll_joint']),
         ]
         return result
 

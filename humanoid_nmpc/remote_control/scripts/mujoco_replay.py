@@ -21,15 +21,17 @@ Usage
   python3 mujoco_replay.py --log trajectory.txt --save replay.mp4
 
 Log format expected (output of retargeting_node with 1 Hz throttle):
-  [INFO] [...]: pitch=-6.3° roll=-2.3° yaw=+0.0° elbow=+71.3°
+  [INFO] [...]: pitch=-6.3° roll=-2.3° yaw=+0.0° elbow=+71.3° wrist=+0.0°
 
-All four values are in degrees; the script converts them to radians.
+All five values are in degrees; the script converts them to radians.
+Old logs without the wrist= field are also accepted (wrist defaults to 0°).
 
 Joints controlled (left arm only):
   left_shoulder_pitch_joint   (index 0 of arm)
   left_shoulder_roll_joint    (index 1)
   left_shoulder_yaw_joint     (index 2)
   left_elbow_joint            (index 3)
+  left_wrist_roll_joint       (index 4)
 All other joints are held at their URDF default (keyframe "home" if defined,
 else qpos0 from the model).
 """
@@ -57,6 +59,7 @@ ARM_JOINTS = [
     'left_shoulder_roll_joint',
     'left_shoulder_yaw_joint',
     'left_elbow_joint',
+    'left_wrist_roll_joint',
 ]
 
 # Default (rest) pose for the whole robot — overridden by the keyframe below
@@ -79,6 +82,7 @@ _LOG_RE = re.compile(
     r'roll=([+-]?\d+\.?\d*)°\s+'
     r'yaw=([+-]?\d+\.?\d*)°\s+'
     r'elbow=([+-]?\d+\.?\d*)°'
+    r'(?:\s+wrist=([+-]?\d+\.?\d*)°)?'   # optional: old logs without wrist_roll
 )
 
 _STAMP_RE = re.compile(r'\[(\d+)\.(\d+)\]')   # ROS stamp: [sec.nanosec]
@@ -91,7 +95,7 @@ def parse_log(text: str) -> tuple[list, list]:
     Returns
     -------
     timestamps : list of float (seconds; 0-based, relative to first line)
-    angles     : list of [pitch, roll, yaw, elbow] in RADIANS
+    angles     : list of [pitch, roll, yaw, elbow, wrist_roll] in RADIANS
     """
     timestamps = []
     angles = []
@@ -100,7 +104,9 @@ def parse_log(text: str) -> tuple[list, list]:
         m = _LOG_RE.search(line)
         if not m:
             continue
-        pitch_deg, roll_deg, yaw_deg, elbow_deg = map(float, m.groups())
+        groups = m.groups()
+        pitch_deg, roll_deg, yaw_deg, elbow_deg = map(float, groups[:4])
+        wrist_deg = float(groups[4]) if groups[4] is not None else 0.0
 
         # Try to extract ROS timestamp for correct inter-frame timing
         ts_m = _STAMP_RE.search(line)
@@ -115,6 +121,7 @@ def parse_log(text: str) -> tuple[list, list]:
             math.radians(roll_deg),
             math.radians(yaw_deg),
             math.radians(elbow_deg),
+            math.radians(wrist_deg),
         ])
 
     if not timestamps:
@@ -196,7 +203,7 @@ def replay(scene_xml: str, timestamps: list, angles: list,
 
 
 def _set_arm(data, arm_qpos_idx, frame_angles):
-    """Write four left-arm qpos values."""
+    """Write left-arm qpos values (shoulder_pitch, roll, yaw, elbow, wrist_roll)."""
     for idx, val in zip(arm_qpos_idx, frame_angles):
         data.qpos[idx] = val
 

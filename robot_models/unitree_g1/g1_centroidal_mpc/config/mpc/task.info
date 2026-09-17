@@ -26,14 +26,13 @@ model_settings
   phaseTransitionStanceTime       0.0
 
   verboseCppAd                  true
-  recompileLibrariesCppAd       false
+  recompileLibrariesCppAd       true   ; set back to false after first run with new wrist DOF
   modelFolderCppAd              build/centroidal_mpc_cppad_autocode_gen
 
   ; Exclude these joints from MPC model
   fixedJointNames
   {
-    [0] "left_wrist_roll_joint"
-    [1] "right_wrist_roll_joint"
+    [0] "right_wrist_roll_joint"
   }
 
   ; Pinocchio Frame names for the contact frames
@@ -151,10 +150,11 @@ initialState
   (26,0)  0.0       ; left_shoulder_roll_joint
   (27,0)  0.0       ; left_shoulder_yaw_joint
   (28,0)  0.0       ; left_elbow_joint
-  (29,0)  0.0       ; right_shoulder_pitch_joint
-  (30,0)  0.0       ; right_shoulder_roll_joint
-  (31,0)  0.0       ; right_shoulder_yaw_joint
-  (32,0)  0.0       ; right_elbow_joint
+  (29,0)  0.0       ; left_wrist_roll_joint
+  (30,0)  0.0       ; right_shoulder_pitch_joint
+  (31,0)  0.0       ; right_shoulder_roll_joint
+  (32,0)  0.0       ; right_shoulder_yaw_joint
+  (33,0)  0.0       ; right_elbow_joint
 }
 
 ; standard state weight matrix
@@ -197,10 +197,11 @@ Q
   (26,26) 20.0     ;    left_shoulder_roll_joint
   (27,27) 2.0      ;    left_shoulder_yaw_joint
   (28,28) 2.0      ;    left_elbow_joint
-  (29,29) 10.0     ;    right_shoulder_pitch_joint
-  (30,30) 20.0     ;    right_shoulder_roll_joint
-  (31,31) 2.0      ;    right_shoulder_yaw_joint
-  (32,32) 2.0      ;    right_elbow_joint
+  (29,29) 2.0      ;    left_wrist_roll_joint
+  (30,30) 10.0     ;    right_shoulder_pitch_joint
+  (31,31) 20.0     ;    right_shoulder_roll_joint
+  (32,32) 2.0      ;    right_shoulder_yaw_joint
+  (33,33) 2.0      ;    right_elbow_joint
 
 }
 
@@ -241,10 +242,11 @@ R
   (26,26) 100.0      ;    left_shoulder_roll_joint
   (27,27) 100.0      ;    left_shoulder_yaw_joint
   (28,28) 200.0      ;    left_elbow_joint
-  (29,29) 200.0      ;    right_shoulder_pitch_joint
-  (30,30) 100.0      ;    right_shoulder_roll_joint
-  (31,31) 100.0      ;    right_shoulder_yaw_joint
-  (32,32) 200.0      ;    right_elbow_joint
+  (29,29) 100.0      ;    left_wrist_roll_joint
+  (30,30) 200.0      ;    right_shoulder_pitch_joint
+  (31,31) 100.0      ;    right_shoulder_roll_joint
+  (32,32) 100.0      ;    right_shoulder_yaw_joint
+  (33,33) 200.0      ;    right_elbow_joint
 }
 
 terminalCostScaling       3.0
@@ -287,10 +289,11 @@ Q_final
   (26,26) 20.0     ;    left_shoulder_roll_joint
   (27,27) 2.0      ;    left_shoulder_yaw_joint
   (28,28) 2.0      ;    left_elbow_joint
-  (29,29) 10.0      ;    right_shoulder_pitch_joint
-  (30,30) 20.0     ;    right_shoulder_roll_joint
-  (31,31) 2.0      ;    right_shoulder_yaw_joint
-  (32,32) 2.0      ;    right_elbow_joint
+  (29,29) 2.0      ;    left_wrist_roll_joint
+  (30,30) 10.0      ;    right_shoulder_pitch_joint
+  (31,31) 20.0     ;    right_shoulder_roll_joint
+  (32,32) 2.0      ;    right_shoulder_yaw_joint
+  (33,33) 2.0      ;    right_elbow_joint
 }
 
 icp_cost_weights
