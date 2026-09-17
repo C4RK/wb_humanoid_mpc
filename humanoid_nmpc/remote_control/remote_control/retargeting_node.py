@@ -195,6 +195,15 @@ class RetargetingNode(Node):
                     'Re-run calibration (now 3 steps) to fix forward-raise roll error.')
 
             self.R_align = R2 @ R1
+
+            # Yaw offset: sensor mounting rotation around the forearm axis.
+            # Computed during calibration from the Step 3 "arm forward" pose.
+            # Subtract from every computed shoulder yaw so that yaw = 0 at
+            # the calibration pose (arm forward, arm straight, no intentional twist).
+            self.yaw_offset = cal.get('yaw_offset', 0.0)
+            self.get_logger().info(
+                f'Yaw offset (sensor mounting): {math.degrees(self.yaw_offset):+.1f}°'
+            )
         except FileNotFoundError as e:
             self.get_logger().fatal(str(e))
             raise
@@ -245,7 +254,7 @@ class RetargetingNode(Node):
         self.get_logger().info(
             f'pitch={math.degrees(angles[0]):+.1f}° roll={math.degrees(angles[1]):+.1f}°'
             f' yaw={math.degrees(angles[2]):+.1f}° elbow={math.degrees(angles[3]):+.1f}°',
-            throttle_duration_sec=1.0
+            throttle_duration_sec=0.1
         )
 
         # Publish  — C++ subscriber picks this up and calls setTargetJointState()
@@ -409,6 +418,15 @@ class RetargetingNode(Node):
             else:
                 # Forearm parallel to upper arm — yaw undefined
                 shoulder_yaw = 0.0
+
+        # Subtract sensor mounting offset so yaw = 0 at calibration pose.
+        # Keep wrap-around in (-π, π].
+        if cos_to_down <= math.cos(math.radians(20)):
+            shoulder_yaw = shoulder_yaw - self.yaw_offset
+            if shoulder_yaw > math.pi:
+                shoulder_yaw -= 2.0 * math.pi
+            elif shoulder_yaw < -math.pi:
+                shoulder_yaw += 2.0 * math.pi
 
         # ----------------------------------------------------------------
         # Step 6 — Apply joint limits

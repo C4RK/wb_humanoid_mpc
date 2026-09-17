@@ -320,8 +320,40 @@ class CalibrationNode(Node):
               f'{arm_forward_hat[2]:+.4f}]')
         print(f'  → Horizontal rotation to correct: {horiz_angle:+.1f}°')
 
+        # ================================================================
+        # Compute yaw offset from Step 3 samples
+        # ================================================================
+        # The receiver sensor is mounted on the wrist strap at some angle
+        # around the forearm axis.  This means the sensor Y-axis (FOREARM_LOCAL_AXIS)
+        # doesn't perfectly align with the anatomical elbow-to-wrist direction,
+        # producing a constant yaw bias.
+        #
+        # Solution: compute R_align now (same as retargeting_node), then measure
+        # the yaw at the Step 3 "arm forward, arm straight" position.  That
+        # measured yaw is the sensor mounting offset — subtract it in retargeting.
+        R1_cal = _rotation_between(arm_down_hat, np.array([0.0, 0.0, -1.0]))
+        fwd_after_R1 = R1_cal @ arm_forward_hat
+        fxy = fwd_after_R1[:2]
+        fxy_norm = float(np.linalg.norm(fxy))
+        if fxy_norm > 0.1:
+            theta = math.atan2(float(fxy[1]), float(fxy[0]))
+            ct, st = math.cos(theta), math.sin(theta)
+            R2_cal = np.array([[ ct, st, 0.0],
+                               [-st, ct, 0.0],
+                               [0.0, 0.0, 1.0]])
+        else:
+            R2_cal = np.eye(3)
+        R_align_cal = R2_cal @ R1_cal
+
+        yaw_offset = self._compute_yaw_offset(
+            samples_3, shoulder_joint, L2, R_align_cal)
+
+        print(f'  → Yaw offset (sensor mounting): {math.degrees(yaw_offset):+.1f}°')
+        print(f'    (subtracted from shoulder_yaw in retargeting; '
+              f'arm-forward pose will read 0°)')
+
         self._save_calibration(L1, L2, computed_total, shoulder_joint,
-                               arm_down_hat, arm_forward_hat)
+                               arm_down_hat, arm_forward_hat, yaw_offset)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
         print('[Calibration] You can now start retargeting_node.')
 
@@ -361,6 +393,61 @@ class CalibrationNode(Node):
                 f'arm may not have been in the correct pose.  Using fallback.')
             return fallback
         return E_mean / norm
+
+    def _compute_yaw_offset(self, samples, shoulder_joint, L2, R_align) -> float:
+        """
+        Compute the mean shoulder yaw at the Step 3 "arm forward, arm straight"
+        pose.  This is the sensor mounting offset around the forearm axis.
+        Subtracting it in retargeting makes yaw = 0 at the calibration pose.
+
+        Uses the same yaw formula as retargeting_node._compute_joint_angles.
+        Samples where the arm is too close to vertical are skipped.
+        Returns the circular mean yaw in radians (0.0 if no valid samples).
+        """
+        world_down = np.array([0.0, 0.0, -1.0])
+        yaws = []
+
+        for s in samples:
+            W = np.array([s.pose.position.x, s.pose.position.y,
+                          s.pose.position.z]) - shoulder_joint
+            q = np.array([s.pose.orientation.w, s.pose.orientation.x,
+                          s.pose.orientation.y, s.pose.orientation.z])
+            forearm_dir_raw = _quat_to_matrix(q) @ FOREARM_LOCAL_AXIS
+
+            E_raw = W - L2 * forearm_dir_raw
+            if np.linalg.norm(E_raw) < 1e-6:
+                continue
+
+            E_al = R_align @ E_raw
+            fd_al = R_align @ forearm_dir_raw
+            E_hat = E_al / np.linalg.norm(E_al)
+
+            cos_to_down = float(np.dot(E_hat, world_down))
+            if cos_to_down > math.cos(math.radians(20)):
+                continue  # too close to vertical — yaw is ill-defined
+
+            ref = world_down - float(np.dot(world_down, E_hat)) * E_hat
+            ref_norm = float(np.linalg.norm(ref))
+            fp = fd_al - float(np.dot(fd_al, E_hat)) * E_hat
+            fp_norm = float(np.linalg.norm(fp))
+
+            if ref_norm > 0.15 and fp_norm > 0.05:
+                ref_n = ref / ref_norm
+                fp_n = fp / fp_norm
+                cross = np.cross(ref_n, fp_n)
+                yaw = math.atan2(float(np.dot(cross, E_hat)),
+                                 float(np.dot(ref_n, fp_n)))
+                yaws.append(yaw)
+
+        if not yaws:
+            print('  [WARNING] Could not compute yaw offset — '
+                  'no valid Step 3 samples (arm may be too close to vertical).')
+            return 0.0
+
+        angles = np.array(yaws)
+        mean_yaw = math.atan2(float(np.mean(np.sin(angles))),
+                              float(np.mean(np.cos(angles))))
+        return mean_yaw
 
     # ------------------------------------------------------------------
     # Core solver
@@ -548,7 +635,8 @@ class CalibrationNode(Node):
     # ------------------------------------------------------------------
 
     def _save_calibration(self, upper_arm_m, forearm_m, total_m,
-                          shoulder_joint, arm_down_hat, arm_forward_hat):
+                          shoulder_joint, arm_down_hat, arm_forward_hat,
+                          yaw_offset: float = 0.0):
         os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
         data = {
             'calibration': {
@@ -571,6 +659,11 @@ class CalibrationNode(Node):
                 'arm_forward_hat_x': round(float(arm_forward_hat[0]), 4),
                 'arm_forward_hat_y': round(float(arm_forward_hat[1]), 4),
                 'arm_forward_hat_z': round(float(arm_forward_hat[2]), 4),
+                # Shoulder yaw measured at the Step 3 "arm forward, arm straight"
+                # pose.  This is the sensor mounting rotation around the forearm
+                # axis.  Subtracted from every yaw reading in retargeting so that
+                # the calibration pose gives yaw = 0°.
+                'yaw_offset': round(float(yaw_offset), 4),
                 'calibrated_at': datetime.now(timezone.utc).isoformat(),
             }
         }
