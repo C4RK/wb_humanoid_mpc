@@ -275,7 +275,7 @@ def _save_video(model, data, arm_qpos_idx, timestamps, angles, path):
         print('  pip install imageio imageio-ffmpeg')
         return
 
-    width, height = 1280, 720
+    width, height = 640, 360
     renderer = mujoco.Renderer(model, height=height, width=width)
 
     frames = []
@@ -283,7 +283,7 @@ def _save_video(model, data, arm_qpos_idx, timestamps, angles, path):
     for i, frame_angles in enumerate(angles):
         _set_arm(data, arm_qpos_idx, frame_angles)
         mujoco.mj_forward(model, data)
-        renderer.update_scene(data, camera='track_pelvis')
+        renderer.update_scene(data)
         pixels = renderer.render()
         frames.append(pixels)
         if (i + 1) % 10 == 0:
