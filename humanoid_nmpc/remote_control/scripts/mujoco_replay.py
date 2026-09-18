@@ -20,6 +20,11 @@ Usage
   # save a video instead of interactive viewer:
   python3 mujoco_replay.py --log trajectory.txt --save replay.mp4
 
+  # LIVE mode — pipe retargeting_node stdout directly to the viewer:
+  docker exec wb-mpc-dev ros2 run remote_control retargeting_node 2>&1 \
+    | grep --line-buffered '°' \
+    | python3 mujoco_replay.py --live --model unitree
+
 Log format expected (output of retargeting_node with 1 Hz throttle):
   [INFO] [...]: pitch=-6.3° roll=-2.3° yaw=+0.0° elbow=+71.3° wrist=+0.0°
 
@@ -208,6 +213,50 @@ def _set_arm(data, arm_qpos_idx, frame_angles):
         data.qpos[idx] = val
 
 
+def _live(model, data, arm_qpos_idx):
+    """Stream stdin line-by-line and update the viewer in real time."""
+    import mujoco.viewer
+    import threading
+
+    latest_angles = [None]
+    lock = threading.Lock()
+
+    def stdin_reader():
+        for line in sys.stdin:
+            m = _LOG_RE.search(line)
+            if not m:
+                continue
+            groups = m.groups()
+            pitch_deg, roll_deg, yaw_deg, elbow_deg = map(float, groups[:4])
+            wrist_deg = float(groups[4]) if groups[4] is not None else 0.0
+            angles = [
+                math.radians(pitch_deg),
+                math.radians(roll_deg),
+                math.radians(yaw_deg),
+                math.radians(elbow_deg),
+                math.radians(wrist_deg),
+            ]
+            with lock:
+                latest_angles[0] = angles
+
+    t = threading.Thread(target=stdin_reader, daemon=True)
+    t.start()
+
+    print('Live mode: MuJoCo viewer open — move your arm to see the robot update.')
+    print('Close the window or press Ctrl+C to exit.\n')
+
+    with mujoco.viewer.launch_passive(model, data) as viewer:
+        while viewer.is_running():
+            with lock:
+                if latest_angles[0] is not None:
+                    _set_arm(data, arm_qpos_idx, latest_angles[0])
+                    mujoco.mj_forward(model, data)
+            viewer.sync()
+            time.sleep(0.01)
+
+    print('\nViewer closed.')
+
+
 def _interactive(model, data, arm_qpos_idx, timestamps, angles):
     """Replay in MuJoCo's interactive viewer."""
     import mujoco.viewer
@@ -314,6 +363,8 @@ def main():
     parser.add_argument('--log',   help='Path to log file (one line per sample)')
     parser.add_argument('--stdin', action='store_true',
                         help='Read log lines from stdin / paste')
+    parser.add_argument('--live',  action='store_true',
+                        help='Live mode: stream stdin line-by-line (pipe retargeting_node output here)')
     parser.add_argument('--model', choices=list(MODELS.keys()),
                         default='menagerie',
                         help='Which MuJoCo model to use (default: menagerie)')
@@ -325,6 +376,24 @@ def main():
 
     global PLAYBACK_SPEED
     PLAYBACK_SPEED = args.speed
+
+    scene_xml = MODELS[args.model]
+
+    if args.live:
+        import mujoco
+        print(f'Loading model: {scene_xml}')
+        model = mujoco.MjModel.from_xml_path(scene_xml)
+        data  = mujoco.MjData(model)
+        home_key = -1
+        for i in range(model.nkey):
+            if 'home' in model.keyframe(i).name.lower() or 'stand' in model.keyframe(i).name.lower():
+                home_key = i
+                break
+        if home_key >= 0:
+            mujoco.mj_resetDataKeyframe(model, data, home_key)
+        arm_qpos_idx = find_joint_qpos_indices(model, ARM_JOINTS)
+        _live(model, data, arm_qpos_idx)
+        return
 
     if args.log:
         with open(args.log) as f:
@@ -344,13 +413,12 @@ def main():
                 break
         else:
             parser.print_help()
-            print('\n[ERROR] Provide --log <file> or --stdin.')
+            print('\n[ERROR] Provide --log <file> or --stdin or --live.')
             sys.exit(1)
 
     timestamps, angles = parse_log(text)
     print(f'Parsed {len(angles)} frames from log.')
 
-    scene_xml = MODELS[args.model]
     replay(scene_xml, timestamps, angles, save_path=args.save)
 
 
