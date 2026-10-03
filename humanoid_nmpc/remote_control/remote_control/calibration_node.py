@@ -453,13 +453,18 @@ class CalibrationNode(Node):
             if cos_to_down > math.cos(math.radians(20)):
                 continue  # too close to vertical — yaw is ill-defined
 
-            ref = world_down - float(np.dot(world_down, E_hat)) * E_hat
-            ref_norm = float(np.linalg.norm(ref))
+            # Use robot-kinematic reference (matches retargeting_node formula).
+            if abs(E_hat[0]) < 1e-6 and abs(E_hat[2]) < 1e-6:
+                shoulder_pitch = 0.0
+            else:
+                shoulder_pitch = math.atan2(-E_hat[0], -E_hat[2])
+            ref_n = np.array([math.cos(shoulder_pitch), 0.0,
+                               -math.sin(shoulder_pitch)])
+
             fp = fd_al - float(np.dot(fd_al, E_hat)) * E_hat
             fp_norm = float(np.linalg.norm(fp))
 
-            if ref_norm > 0.15 and fp_norm > 0.05:
-                ref_n = ref / ref_norm
+            if fp_norm > 0.05:
                 fp_n = fp / fp_norm
                 cross = np.cross(ref_n, fp_n)
                 yaw = math.atan2(float(np.dot(cross, E_hat)),

@@ -399,44 +399,45 @@ class RetargetingNode(Node):
         # ----------------------------------------------------------------
         # Step 5 — Shoulder yaw (upper arm axial twist)
         #
-        # Shoulder yaw describes how much the upper arm is twisted around its
-        # own axis. It is computed from the forearm's orientation relative to
-        # the plane formed by the upper arm direction and the world vertical.
+        # Reference direction: the robot's zero-yaw direction at the current
+        # shoulder_pitch.  From the G1 URDF: at all shoulder joints = 0 the
+        # forearm points forward (+X).  Applying only Ry(pitch) gives:
         #
-        # Reference plane normal: cross(E_hat, world_down)
-        # Forearm component perpendicular to upper arm: forearm_dir - (forearm_dir·E_hat)·E_hat
-        # Shoulder yaw = signed angle between reference direction and forearm component.
+        #   ref = [cos(pitch), 0, -sin(pitch)]
+        #
+        # This is always a unit vector AND always perpendicular to E_hat
+        # (proof: dot = cos(p)*E_hat[0] + 0 - sin(p)*E_hat[2], and
+        # shoulder_pitch = atan2(-E_hat[0], -E_hat[2]) → cos(p) = -E_hat[2]/r,
+        # sin(p) = -E_hat[0]/r → dot = 0).  No projection step required.
+        #
+        # Verified on G1 URDF:
+        #   pitch=0   (arm down):     ref=[1,0,0]=forward,  yaw=0 → elbow forward  ✓
+        #   pitch=-90 (arm forward):  ref=[0,0,1]=up,       yaw=0 → elbow up       ✓
+        #   pitch=0, roll=90 (sideways): ref=[1,0,0]=forward, yaw=0 → forearm forward ✓
         # ----------------------------------------------------------------
-        world_down = np.array([0.0, 0.0, -1.0])
+        robot_yaw_ref = np.array([math.cos(shoulder_pitch),
+                                   0.0,
+                                   -math.sin(shoulder_pitch)])
 
-        # Shoulder yaw is the axial twist of the upper arm around its own axis.
-        # It is only measurable when the arm is NOT pointing straight down:
-        # if the arm points down, every twist looks identical.
-        #
-        # Singularity guard: if the arm is within ~20° of vertical, yaw is
-        # ill-conditioned — the reference vector approaches zero, atan2 gets
-        # garbage inputs, and the value hits the joint limit (-150°).
-        # Return 0 in that region (arm-down is the natural rest position anyway).
-        cos_to_down = float(np.dot(E_hat, world_down))  # 1.0 = pointing straight down
+        # Keep the vertical singularity guard: with arm near-vertical the
+        # shoulder_pitch formula is degenerate (atan2(0,0)), so robot_yaw_ref
+        # falls back to [1,0,0] and the yaw reading is unreliable.
+        world_down = np.array([0.0, 0.0, -1.0])
+        cos_to_down = float(np.dot(E_hat, world_down))
         if cos_to_down > math.cos(math.radians(20)):    # within 20° of vertical
             shoulder_yaw = 0.0
         else:
-            # Reference direction: perpendicular to upper arm, in the gravity plane
-            ref = world_down - np.dot(world_down, E_hat) * E_hat
-            ref_norm = np.linalg.norm(ref)
-
             # Forearm component perpendicular to upper arm
             fp = forearm_dir - np.dot(forearm_dir, E_hat) * E_hat
             fp_norm = np.linalg.norm(fp)
 
-            if ref_norm > 0.15 and fp_norm > 0.05:
-                ref = ref / ref_norm
-                fp  = fp  / fp_norm
-                cross = np.cross(ref, fp)
+            if fp_norm > 0.05:
+                fp_n = fp / fp_norm
+                cross = np.cross(robot_yaw_ref, fp_n)
                 shoulder_yaw = math.atan2(float(np.dot(cross, E_hat)),
-                                          float(np.dot(ref, fp)))
+                                          float(np.dot(robot_yaw_ref, fp_n)))
             else:
-                # Forearm parallel to upper arm — yaw undefined
+                # Forearm nearly parallel to upper arm — yaw undefined
                 shoulder_yaw = 0.0
 
         # Subtract sensor mounting offset so yaw = 0 at calibration pose.
