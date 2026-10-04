@@ -434,8 +434,9 @@ class RetargetingNode(Node):
             if fp_norm > 0.05:
                 fp_n = fp / fp_norm
                 cross = np.cross(robot_yaw_ref, fp_n)
-                shoulder_yaw = math.atan2(float(np.dot(cross, E_hat)),
-                                          float(np.dot(robot_yaw_ref, fp_n)))
+                # Negated: shoulder_yaw axis = -E_hat (anti-parallel to arm direction)
+                shoulder_yaw = math.atan2(-float(np.dot(cross, E_hat)),
+                                           float(np.dot(robot_yaw_ref, fp_n)))
             else:
                 # Forearm nearly parallel to upper arm — yaw undefined
                 shoulder_yaw = 0.0

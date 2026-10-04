@@ -286,17 +286,18 @@ class CalibrationNode(Node):
         # STEP 3 — Forward reference: arm raised straight forward
         # ================================================================
         print('=' * 60)
-        print('STEP 3: Forward reference — align the horizontal frame')
+        print('STEP 3: Forward reference — calibrate arm direction + wrist zero')
         print()
-        print('  Raise your arm STRAIGHT FORWARD to roughly shoulder height.')
-        print('  Keep the elbow roughly straight.')
+        print('  Raise your arm STRAIGHT FORWARD to shoulder height.')
+        print('  Bend the elbow 90° and point your forearm STRAIGHT UP')
+        print('  (vertical, like raising your hand to ask a question).')
         print('  Press ENTER, then hold the pose still for 5 seconds.')
         print()
-        print('  WHY: the transmitter may be rotated horizontally on your')
-        print('       shoulder.  This corrects the roll error that appears')
-        print('       when the arm is raised forward.')
+        print('  WHY: the arm-forward direction corrects the horizontal sensor')
+        print('       mounting offset.  The forearm-up position sets the zero')
+        print('       for shoulder yaw (robot yaw=0 = forearm vertical at arm-forward).')
         print('=' * 60)
-        input('Press ENTER, then hold arm straight forward...')
+        input('Press ENTER, then hold arm forward + forearm straight up...')
 
         samples_3 = self._collect_samples_timed(5.0)
         arm_forward_hat = self._compute_elbow_hat(
@@ -467,8 +468,9 @@ class CalibrationNode(Node):
             if fp_norm > 0.05:
                 fp_n = fp / fp_norm
                 cross = np.cross(ref_n, fp_n)
-                yaw = math.atan2(float(np.dot(cross, E_hat)),
-                                 float(np.dot(ref_n, fp_n)))
+                # Negated: shoulder_yaw axis = -E_hat
+                yaw = math.atan2(-float(np.dot(cross, E_hat)),
+                                  float(np.dot(ref_n, fp_n)))
                 yaws.append(yaw)
 
         if not yaws:
