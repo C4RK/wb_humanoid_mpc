@@ -60,10 +60,11 @@ TargetTrajectories WBMpcTargetTrajectoriesCalculator::commandedPositionToTargetT
   // desired time trajectory
   const scalar_array_t timeTrajectory{initTime, targetReachingTime};
 
+  const vector_t js = getTargetJointStateCopy();
   // desired state trajectory
   vector_array_t stateTrajectory(2, vector_t::Zero(mpcRobotModelPtr_->getStateDim()));
-  stateTrajectory[0] << currentPose, targetJointState_, vector_t::Zero(mpcRobotModelPtr_->getGenCoordinatesDim());
-  stateTrajectory[1] << targetPose, targetJointState_, vector_t::Zero(mpcRobotModelPtr_->getGenCoordinatesDim());
+  stateTrajectory[0] << currentPose, js, vector_t::Zero(mpcRobotModelPtr_->getGenCoordinatesDim());
+  stateTrajectory[1] << targetPose, js, vector_t::Zero(mpcRobotModelPtr_->getGenCoordinatesDim());
 
   // desired input trajectory (just right dimensions, they are not used)
   const vector_array_t inputTrajectory(2, vector_t::Zero(mpcRobotModelPtr_->getInputDim()));
@@ -121,11 +122,12 @@ TargetTrajectories WBMpcTargetTrajectoriesCalculator::commandedVelocityToTargetT
   // desired time trajectory
   const scalar_array_t timeTrajectory{initTime, initTime + intermediateTargetTime, initTime + mpcHorizon_};
 
+  const vector_t js = getTargetJointStateCopy();
   // desired state trajectory
   vector_array_t stateTrajectory(3, vector_t::Zero(mpcRobotModelPtr_->getStateDim()));
-  stateTrajectory[0] << currentPoseTarget, targetJointState_, targetBaseVel, vector_t::Zero(mpcRobotModelPtr_->getJointDim());
-  stateTrajectory[1] << intermediateTargetPose, targetJointState_, targetBaseVel, vector_t::Zero(mpcRobotModelPtr_->getJointDim());
-  stateTrajectory[2] << finalTargetPose, targetJointState_, targetBaseVel, vector_t::Zero(mpcRobotModelPtr_->getJointDim());
+  stateTrajectory[0] << currentPoseTarget, js, targetBaseVel, vector_t::Zero(mpcRobotModelPtr_->getJointDim());
+  stateTrajectory[1] << intermediateTargetPose, js, targetBaseVel, vector_t::Zero(mpcRobotModelPtr_->getJointDim());
+  stateTrajectory[2] << finalTargetPose, js, targetBaseVel, vector_t::Zero(mpcRobotModelPtr_->getJointDim());
 
   // desired input trajectory (just right dimensions, they are not used)
   const vector_array_t inputTrajectory(3, vector_t::Zero(mpcRobotModelPtr_->getInputDim()));

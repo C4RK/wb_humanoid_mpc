@@ -66,10 +66,11 @@ TargetTrajectories CentroidalMpcTargetTrajectoriesCalculator::commandedPositionT
   // desired time trajectory
   const scalar_array_t timeTrajectory{initTime, targetReachingTime};
 
+  const vector_t js = getTargetJointStateCopy();
   // desired state trajectory
   vector_array_t stateTrajectory(2, vector_t::Zero(mpcRobotModelPtr_->getStateDim()));
-  stateTrajectory[0] << vector_t::Zero(6), currentPoseTarget, targetJointState_;
-  stateTrajectory[1] << vector_t::Zero(6), targetPose, targetJointState_;
+  stateTrajectory[0] << vector_t::Zero(6), currentPoseTarget, js;
+  stateTrajectory[1] << vector_t::Zero(6), targetPose, js;
 
   // desired input trajectory (just right dimensions, they are not used)
   const vector_array_t inputTrajectory(2, vector_t::Zero(mpcRobotModelPtr_->getInputDim()));
@@ -142,11 +143,12 @@ TargetTrajectories CentroidalMpcTargetTrajectoriesCalculator::commandedVelocityT
   // desired time trajectory
   const scalar_array_t timeTrajectory{initTime, initTime + intermediateTargetTime, initTime + mpcHorizon_};
 
+  const vector_t js = getTargetJointStateCopy();
   // desired state trajectory
   vector_array_t stateTrajectory(3, vector_t::Zero(mpcRobotModelPtr_->getStateDim()));
-  stateTrajectory[0] << targetMomentum, currentPoseTarget, targetJointState_;
-  stateTrajectory[1] << targetMomentum, intermediateTargetPose, targetJointState_;
-  stateTrajectory[2] << targetMomentum, finalTargetPose, targetJointState_;
+  stateTrajectory[0] << targetMomentum, currentPoseTarget, js;
+  stateTrajectory[1] << targetMomentum, intermediateTargetPose, js;
+  stateTrajectory[2] << targetMomentum, finalTargetPose, js;
 
   // desired input trajectory (just right dimensions, they are not used)
   const vector_array_t inputTrajectory(3, vector_t::Zero(mpcRobotModelPtr_->getInputDim()));

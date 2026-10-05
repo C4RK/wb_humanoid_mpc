@@ -61,6 +61,7 @@ TargetTrajectoriesCalculatorBase::TargetTrajectoriesCalculatorBase(const std::st
 
 void TargetTrajectoriesCalculatorBase::setTargetJointState(const vector_t targetJointState) {
   assert(targetJointState.size() == mpcRobotModelPtr_->getJointDim());
+  std::lock_guard<std::mutex> lock(jointStateMutex_);
   targetJointState_ = targetJointState;
 }
 

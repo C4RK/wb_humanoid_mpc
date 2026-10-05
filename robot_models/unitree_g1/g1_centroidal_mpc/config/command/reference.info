@@ -32,7 +32,6 @@ defaultJointState
   (19,0)  0.0      ; right_shoulder_roll_joint
   (20,0)  0.0      ; right_shoulder_yaw_joint
   (21,0)  0.0      ; right_elbow_joint
-  (22,0)  0.0      ; right_wrist_roll_joint
 
 }
 

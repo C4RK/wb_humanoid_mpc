@@ -31,6 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #pragma once
 
 #include <functional>
+#include <mutex>
 
 #include <ocs2_core/reference/TargetTrajectories.h>
 #include <ocs2_mpc/SystemObservation.h>
@@ -88,6 +89,12 @@ class TargetTrajectoriesCalculatorBase {
                                     scalar_t deltaPelvisHeight,
                                     scalar_t deltaT) const;
 
+  // Thread-safe copy of the joint state target (written by ROS callback, read by MPC thread).
+  vector_t getTargetJointStateCopy() const {
+    std::lock_guard<std::mutex> lock(jointStateMutex_);
+    return targetJointState_;
+  }
+
   const MpcRobotModelBase<scalar_t>* mpcRobotModelPtr_;
 
   // For pose control mode
@@ -101,8 +108,11 @@ class TargetTrajectoriesCalculatorBase {
   scalar_t maxRotationVelocity_ = 0.6;
 
   scalar_t defaultBaseHeight_;
-  vector_t targetJointState_;
   scalar_t mpcHorizon_;
+
+ private:
+  mutable std::mutex jointStateMutex_;
+  vector_t targetJointState_;
 };
 
 }  // namespace ocs2::humanoid
