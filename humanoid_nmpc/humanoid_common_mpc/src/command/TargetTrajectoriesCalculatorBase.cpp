@@ -44,6 +44,11 @@ TargetTrajectoriesCalculatorBase::TargetTrajectoriesCalculatorBase(const std::st
                                                                    scalar_t mpcHorizon)
     : mpcRobotModelPtr_(mpcRobotModel.clone()), mpcHorizon_(mpcHorizon) {
   std::cerr << "Loading reference file: " << referenceFile << std::endl;
+  std::cerr << "[TargetTrajectoriesCalculatorBase] getJointDim() = " << mpcRobotModel.getJointDim() << std::endl;
+  std::cerr << "[TargetTrajectoriesCalculatorBase] MPC joint names:" << std::endl;
+  for (size_t i = 0; i < mpcRobotModel.modelSettings.mpcModelJointNames.size(); ++i) {
+    std::cerr << "  [" << i << "] " << mpcRobotModel.modelSettings.mpcModelJointNames[i] << std::endl;
+  }
   targetJointState_.resize(mpcRobotModel.getJointDim());
   loadData::loadCppDataType(referenceFile, "defaultBaseHeight", defaultBaseHeight_);
   loadData::loadEigenMatrix(referenceFile, "defaultJointState", targetJointState_);
@@ -60,7 +65,13 @@ TargetTrajectoriesCalculatorBase::TargetTrajectoriesCalculatorBase(const std::st
 /******************************************************************************************************/
 
 void TargetTrajectoriesCalculatorBase::setTargetJointState(const vector_t targetJointState) {
-  assert(targetJointState.size() == mpcRobotModelPtr_->getJointDim());
+  const size_t expected = mpcRobotModelPtr_->getJointDim();
+  if (targetJointState.size() != expected) {
+    std::cerr << "[setTargetJointState] SIZE MISMATCH: got " << targetJointState.size()
+              << " expected " << expected << " — ignoring message." << std::endl;
+    return;
+  }
+  std::cerr << "[setTargetJointState] OK size=" << targetJointState.size() << std::endl;
   std::lock_guard<std::mutex> lock(jointStateMutex_);
   targetJointState_ = targetJointState;
 }

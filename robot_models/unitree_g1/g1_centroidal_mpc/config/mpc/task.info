@@ -26,7 +26,7 @@ model_settings
   phaseTransitionStanceTime       0.0
 
   verboseCppAd                  true
-  recompileLibrariesCppAd       true   ; set back to false after first run with new wrist DOF
+  recompileLibrariesCppAd       false   ; set back to false after first run with new wrist DOF
   modelFolderCppAd              build/centroidal_mpc_cppad_autocode_gen
 
   ; Exclude these joints from MPC model
