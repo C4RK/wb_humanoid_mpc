@@ -157,32 +157,41 @@ class RetargetingNode(Node):
             arm_sideways_key = cal.get('arm_sideways_hat_x')
 
             if arm_fwd_key is not None and arm_sideways_key is not None:
-                # ── 3-vector SVD (Wahba's problem) ────────────────────────
-                arm_fwd = np.array([cal['arm_forward_hat_x'],
-                                    cal['arm_forward_hat_y'],
-                                    cal['arm_forward_hat_z']])
-                arm_fwd /= np.linalg.norm(arm_fwd)
+                # ── Gram-Schmidt: arm_sideways defines the lateral axis exactly ──
+                #
+                # SVD (Wahba's) averaged over all three directions, but arm_fwd
+                # and arm_side are only ~46° apart in transmitter space (should be
+                # 90°), so the SVD compromise left pitch = -38° in lateral raises.
+                #
+                # Instead: fix arm_side → robot [0,1,0] exactly, then orthogonalise
+                # arm_down against it and build the forward axis via cross product.
+                # This guarantees pitch=0° for the exact pose held at Step 4.
                 arm_side = np.array([cal['arm_sideways_hat_x'],
                                      cal['arm_sideways_hat_y'],
                                      cal['arm_sideways_hat_z']])
                 arm_side /= np.linalg.norm(arm_side)
 
-                # Target: arm_down→[0,0,-1], arm_fwd→[1,0,0], arm_side→[0,1,0]
-                t_down    = np.array([0.0, 0.0, -1.0])
-                t_forward = np.array([1.0,  0.0,  0.0])
-                t_side    = np.array([0.0,  1.0,  0.0])
-                B = (np.outer(t_down, arm_down) +
-                     np.outer(t_forward, arm_fwd) +
-                     np.outer(t_side, arm_side))
-                U, _, Vt = np.linalg.svd(B)
-                d = np.linalg.det(U @ Vt)
-                self.R_align = U @ np.diag([1.0, 1.0, d]) @ Vt
+                # e_side: the robot's lateral (+Y) direction in transmitter frame
+                e_side = arm_side
 
-                dot_df = float(np.dot(arm_down, arm_fwd))
-                angle_df = math.degrees(math.acos(float(np.clip(dot_df, -1.0, 1.0))))
+                # Project arm_down perpendicular to e_side → pure "down" component
+                down_orth = arm_down - np.dot(arm_down, e_side) * e_side
+                e_down = down_orth / np.linalg.norm(down_orth)   # → robot [0,0,-1]
+                e_up   = -e_down                                   # → robot [0,0,+1]
+
+                # Right-hand forward: cross(side, up) → robot [1,0,0]
+                e_fwd = np.cross(e_side, e_up)
+                e_fwd /= np.linalg.norm(e_fwd)
+
+                # R_align = source_frame.T  (orthonormal by construction)
+                M_S = np.column_stack([e_fwd, e_side, e_up])
+                self.R_align = M_S.T
+
+                dot_ds = float(np.dot(arm_down, arm_side))
+                angle_ds = math.degrees(math.acos(float(np.clip(dot_ds, -1.0, 1.0))))
                 self.get_logger().info(
-                    f'R_align: 3-vector SVD (Wahba). '
-                    f'arm_down⊥arm_fwd angle={angle_df:.1f}° '
+                    f'R_align: Gram-Schmidt (arm_side exact, arm_down approx). '
+                    f'arm_down/arm_side angle={angle_ds:.1f}° '
                     f'(90° = perfect orthogonal)')
             elif arm_fwd_key is not None:
                 # ── 2-step fallback ───────────────────────────────────────
