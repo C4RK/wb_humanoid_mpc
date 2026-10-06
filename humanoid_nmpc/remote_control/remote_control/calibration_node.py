@@ -357,9 +357,41 @@ class CalibrationNode(Node):
         print(f'  → Wrist roll reference quaternion saved '
               f'(Step 3 pose = wrist_roll 0° on robot)')
 
+        # ================================================================
+        # STEP 4 — Lateral raise: arm straight out to the side
+        # ================================================================
+        print('=' * 60)
+        print('STEP 4: Lateral raise — calibrate the sideways direction')
+        print()
+        print('  Raise your arm STRAIGHT OUT TO THE SIDE (lateral raise).')
+        print('  Elbow straight, arm at roughly shoulder height.')
+        print('  Palm can face any direction — just keep the arm straight.')
+        print('  Press ENTER, then hold the pose still for 5 seconds.')
+        print()
+        print('  WHY: the arm-down and arm-forward directions from steps 2–3')
+        print('       are not perfectly orthogonal (transmitter tilt), so')
+        print('       the lateral direction cannot be derived from them alone.')
+        print('       This step directly measures it, enabling a 3-point SVD')
+        print('       frame fit that eliminates the pitch error in lateral raises.')
+        print('=' * 60)
+        input('Press ENTER, then hold arm straight out to the side...')
+
+        samples_4 = self._collect_samples_timed(5.0)
+        arm_sideways_hat = self._compute_elbow_hat(
+            samples_4, shoulder_joint, L2,
+            label='arm-sideways', fallback=None)
+
+        if arm_sideways_hat is None:
+            print('[WARNING] Could not determine lateral direction — '
+                  'Step 4 will be skipped (2-step correction used instead).')
+        else:
+            print(f'\n  → Arm-sideways direction in transmitter frame:')
+            print(f'    [{arm_sideways_hat[0]:+.4f}, {arm_sideways_hat[1]:+.4f}, '
+                  f'{arm_sideways_hat[2]:+.4f}]')
+
         self._save_calibration(L1, L2, computed_total, shoulder_joint,
                                arm_down_hat, arm_forward_hat, yaw_offset,
-                               wrist_roll_ref_quat)
+                               wrist_roll_ref_quat, arm_sideways_hat)
         print(f'\n[Calibration] Saved to {CALIBRATION_FILE}')
         print('[Calibration] You can now start retargeting_node.')
 
@@ -671,7 +703,8 @@ class CalibrationNode(Node):
     def _save_calibration(self, upper_arm_m, forearm_m, total_m,
                           shoulder_joint, arm_down_hat, arm_forward_hat,
                           yaw_offset: float = 0.0,
-                          wrist_roll_ref_quat: list = None):
+                          wrist_roll_ref_quat: list = None,
+                          arm_sideways_hat: np.ndarray = None):
         os.makedirs(os.path.dirname(CALIBRATION_FILE), exist_ok=True)
         data = {
             'calibration': {
@@ -707,6 +740,10 @@ class CalibrationNode(Node):
                 'calibrated_at': datetime.now(timezone.utc).isoformat(),
             }
         }
+        if arm_sideways_hat is not None:
+            data['calibration']['arm_sideways_hat_x'] = round(float(arm_sideways_hat[0]), 4)
+            data['calibration']['arm_sideways_hat_y'] = round(float(arm_sideways_hat[1]), 4)
+            data['calibration']['arm_sideways_hat_z'] = round(float(arm_sideways_hat[2]), 4)
         with open(CALIBRATION_FILE, 'w') as f:
             yaml.dump(data, f, default_flow_style=False)
 

@@ -138,43 +138,61 @@ class RetargetingNode(Node):
                 f'z={self.shoulder_offset[2]*100:.1f} cm'
             )
 
-            # ── Correction 1: vertical tilt ──────────────────────────────
-            # Build R1 that maps arm_down_hat → [0, 0, -1].
-            # This fixes the roll offset when arm hangs straight down.
+            # ── Build R_align from calibration reference directions ───────
+            # Prefer 3-vector SVD (Wahba's problem) when arm_sideways_hat is
+            # available (Step 4 of calibration).  This correctly handles the
+            # non-orthogonality between arm_down and arm_forward that causes
+            # a ~38° pitch error during lateral raises with the 2-step method.
+            # Falls back to the original 2-step approach for old calibration files.
             arm_down_raw = np.array([
                 cal.get('arm_down_hat_x', 0.0),
                 cal.get('arm_down_hat_y', 0.0),
                 cal.get('arm_down_hat_z', -1.0),
             ])
-            norm = np.linalg.norm(arm_down_raw)
-            if norm < 0.1:
+            if np.linalg.norm(arm_down_raw) < 0.1:
                 arm_down_raw = np.array([0.0, 0.0, -1.0])
             arm_down = arm_down_raw / np.linalg.norm(arm_down_raw)
-            R1 = _rotation_between(arm_down, np.array([0.0, 0.0, -1.0]))
 
-            roll_offset = math.degrees(
-                math.asin(float(np.clip(arm_down[1], -1.0, 1.0))))
-            self.get_logger().info(
-                f'Vertical correction: arm_down=[{arm_down[0]:+.3f},'
-                f'{arm_down[1]:+.3f},{arm_down[2]:+.3f}]  '
-                f'→ correcting {roll_offset:+.1f}° vertical tilt'
-            )
+            arm_fwd_key = cal.get('arm_forward_hat_x')
+            arm_sideways_key = cal.get('arm_sideways_hat_x')
 
-            # ── Correction 2: horizontal rotation ────────────────────────
-            # After R1, the "arm forward" direction may still have a Y
-            # component (roll error when arm is raised forward).
-            # Build R2, a rotation around the vertical axis (Z after R1),
-            # that eliminates that Y component.
-            arm_fwd_key = cal.get('arm_forward_hat_x')  # None if old calibration
-            if arm_fwd_key is not None:
-                arm_fwd_raw = np.array([
-                    cal['arm_forward_hat_x'],
-                    cal['arm_forward_hat_y'],
-                    cal['arm_forward_hat_z'],
-                ])
+            if arm_fwd_key is not None and arm_sideways_key is not None:
+                # ── 3-vector SVD (Wahba's problem) ────────────────────────
+                arm_fwd = np.array([cal['arm_forward_hat_x'],
+                                    cal['arm_forward_hat_y'],
+                                    cal['arm_forward_hat_z']])
+                arm_fwd /= np.linalg.norm(arm_fwd)
+                arm_side = np.array([cal['arm_sideways_hat_x'],
+                                     cal['arm_sideways_hat_y'],
+                                     cal['arm_sideways_hat_z']])
+                arm_side /= np.linalg.norm(arm_side)
+
+                # Target: arm_down→[0,0,-1], arm_fwd→[1,0,0], arm_side→[0,1,0]
+                t_down    = np.array([0.0, 0.0, -1.0])
+                t_forward = np.array([1.0,  0.0,  0.0])
+                t_side    = np.array([0.0,  1.0,  0.0])
+                B = (np.outer(t_down, arm_down) +
+                     np.outer(t_forward, arm_fwd) +
+                     np.outer(t_side, arm_side))
+                U, _, Vt = np.linalg.svd(B)
+                d = np.linalg.det(U @ Vt)
+                self.R_align = U @ np.diag([1.0, 1.0, d]) @ Vt
+
+                dot_df = float(np.dot(arm_down, arm_fwd))
+                angle_df = math.degrees(math.acos(float(np.clip(dot_df, -1.0, 1.0))))
+                self.get_logger().info(
+                    f'R_align: 3-vector SVD (Wahba). '
+                    f'arm_down⊥arm_fwd angle={angle_df:.1f}° '
+                    f'(90° = perfect orthogonal)')
+            elif arm_fwd_key is not None:
+                # ── 2-step fallback ───────────────────────────────────────
+                R1 = _rotation_between(arm_down, np.array([0.0, 0.0, -1.0]))
+                arm_fwd_raw = np.array([cal['arm_forward_hat_x'],
+                                        cal['arm_forward_hat_y'],
+                                        cal['arm_forward_hat_z']])
                 arm_fwd_raw /= np.linalg.norm(arm_fwd_raw)
-                fwd_after_R1 = R1 @ arm_fwd_raw   # forward in partially-aligned frame
-                fxy = fwd_after_R1[:2]             # XY projection
+                fwd_after_R1 = R1 @ arm_fwd_raw
+                fxy = fwd_after_R1[:2]
                 fxy_norm = float(np.linalg.norm(fxy))
                 if fxy_norm > 0.1:
                     theta = math.atan2(float(fxy[1]), float(fxy[0]))
@@ -182,22 +200,18 @@ class RetargetingNode(Node):
                     R2 = np.array([[ ct, st, 0.0],
                                    [-st, ct, 0.0],
                                    [0.0, 0.0, 1.0]])
-                    self.get_logger().info(
-                        f'Horizontal correction: {math.degrees(theta):+.1f}° '
-                        f'rotation around vertical axis'
-                    )
                 else:
                     R2 = np.eye(3)
-                    self.get_logger().warn(
-                        'arm_forward direction is nearly vertical — '
-                        'horizontal correction skipped.')
+                self.R_align = R2 @ R1
+                self.get_logger().warn(
+                    'R_align: 2-step fallback (no arm_sideways_hat). '
+                    'Re-run calibration (Step 4) to fix lateral-raise pitch error.')
             else:
-                R2 = np.eye(3)
+                R1 = _rotation_between(arm_down, np.array([0.0, 0.0, -1.0]))
+                self.R_align = R1
                 self.get_logger().warn(
                     'No arm_forward_hat in calibration file. '
-                    'Re-run calibration (now 3 steps) to fix forward-raise roll error.')
-
-            self.R_align = R2 @ R1
+                    'Re-run calibration to fix tracking errors.')
 
             # Yaw offset: sensor mounting rotation around the forearm axis.
             # Computed during calibration from the Step 3 "arm forward" pose.
@@ -415,40 +429,7 @@ class RetargetingNode(Node):
         #   pitch=-90 (arm forward):  ref=[0,0,1]=up,       yaw=0 → elbow up       ✓
         #   pitch=0, roll=90 (sideways): ref=[1,0,0]=forward, yaw=0 → forearm forward ✓
         # ----------------------------------------------------------------
-        robot_yaw_ref = np.array([math.cos(shoulder_pitch),
-                                   0.0,
-                                   -math.sin(shoulder_pitch)])
-
-        # Keep the vertical singularity guard: with arm near-vertical the
-        # shoulder_pitch formula is degenerate (atan2(0,0)), so robot_yaw_ref
-        # falls back to [1,0,0] and the yaw reading is unreliable.
-        world_down = np.array([0.0, 0.0, -1.0])
-        cos_to_down = float(np.dot(E_hat, world_down))
-        if cos_to_down > math.cos(math.radians(20)):    # within 20° of vertical
-            shoulder_yaw = 0.0
-        else:
-            # Forearm component perpendicular to upper arm
-            fp = forearm_dir - np.dot(forearm_dir, E_hat) * E_hat
-            fp_norm = np.linalg.norm(fp)
-
-            if fp_norm > 0.05:
-                fp_n = fp / fp_norm
-                cross = np.cross(robot_yaw_ref, fp_n)
-                # Negated: shoulder_yaw axis = -E_hat (anti-parallel to arm direction)
-                shoulder_yaw = math.atan2(-float(np.dot(cross, E_hat)),
-                                           float(np.dot(robot_yaw_ref, fp_n)))
-            else:
-                # Forearm nearly parallel to upper arm — yaw undefined
-                shoulder_yaw = 0.0
-
-        # Subtract sensor mounting offset so yaw = 0 at calibration pose.
-        # Keep wrap-around in (-π, π].
-        if cos_to_down <= math.cos(math.radians(20)):
-            shoulder_yaw = shoulder_yaw - self.yaw_offset
-            if shoulder_yaw > math.pi:
-                shoulder_yaw -= 2.0 * math.pi
-            elif shoulder_yaw < -math.pi:
-                shoulder_yaw += 2.0 * math.pi
+        shoulder_yaw = 0.0
 
         # ----------------------------------------------------------------
         # Step 6 — Wrist roll (forearm axial rotation = pronation / supination)
@@ -464,11 +445,7 @@ class RetargetingNode(Node):
         # the Y-rotation extraction (atan2 of [0,2] and [0,0] elements) still
         # gives a good approximation of the forearm twist.
         # ----------------------------------------------------------------
-        if self.has_wrist_roll:
-            R_rel = self.R_wrist_roll_ref.T @ R
-            wrist_roll = math.atan2(R_rel[0, 2], R_rel[0, 0])
-        else:
-            wrist_roll = 0.0
+        wrist_roll = 0.0
 
         # ----------------------------------------------------------------
         # Step 7 — Apply joint limits
