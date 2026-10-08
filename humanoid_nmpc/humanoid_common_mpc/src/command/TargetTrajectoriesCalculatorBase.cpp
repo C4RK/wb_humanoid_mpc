@@ -65,13 +65,12 @@ TargetTrajectoriesCalculatorBase::TargetTrajectoriesCalculatorBase(const std::st
 /******************************************************************************************************/
 
 void TargetTrajectoriesCalculatorBase::setTargetJointState(const vector_t targetJointState) {
-  const size_t expected = mpcRobotModelPtr_->getJointDim();
+  const Eigen::Index expected = static_cast<Eigen::Index>(mpcRobotModelPtr_->getJointDim());
   if (targetJointState.size() != expected) {
     std::cerr << "[setTargetJointState] SIZE MISMATCH: got " << targetJointState.size()
               << " expected " << expected << " — ignoring message." << std::endl;
     return;
   }
-  std::cerr << "[setTargetJointState] OK size=" << targetJointState.size() << std::endl;
   std::lock_guard<std::mutex> lock(jointStateMutex_);
   targetJointState_ = targetJointState;
 }

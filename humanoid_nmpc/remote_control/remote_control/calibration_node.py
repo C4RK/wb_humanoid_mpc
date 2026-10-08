@@ -51,6 +51,11 @@ from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
 from datetime import datetime, timezone
 
+from remote_control.retargeting_kinematics import (
+    alignment_rotation_from_calibration,
+    calibration_alignment_errors,
+)
+
 
 CALIBRATION_FILE = '/wb_humanoid_mpc_ws/src/wb_humanoid_mpc/humanoid_nmpc/remote_control/config/wmet_calibration.yaml'
 
@@ -321,38 +326,6 @@ class CalibrationNode(Node):
               f'{arm_forward_hat[2]:+.4f}]')
         print(f'  → Horizontal rotation to correct: {horiz_angle:+.1f}°')
 
-        # ================================================================
-        # Compute yaw offset from Step 3 samples
-        # ================================================================
-        # The receiver sensor is mounted on the wrist strap at some angle
-        # around the forearm axis.  This means the sensor Y-axis (FOREARM_LOCAL_AXIS)
-        # doesn't perfectly align with the anatomical elbow-to-wrist direction,
-        # producing a constant yaw bias.
-        #
-        # Solution: compute R_align now (same as retargeting_node), then measure
-        # the yaw at the Step 3 "arm forward, arm straight" position.  That
-        # measured yaw is the sensor mounting offset — subtract it in retargeting.
-        R1_cal = _rotation_between(arm_down_hat, np.array([0.0, 0.0, -1.0]))
-        fwd_after_R1 = R1_cal @ arm_forward_hat
-        fxy = fwd_after_R1[:2]
-        fxy_norm = float(np.linalg.norm(fxy))
-        if fxy_norm > 0.1:
-            theta = math.atan2(float(fxy[1]), float(fxy[0]))
-            ct, st = math.cos(theta), math.sin(theta)
-            R2_cal = np.array([[ ct, st, 0.0],
-                               [-st, ct, 0.0],
-                               [0.0, 0.0, 1.0]])
-        else:
-            R2_cal = np.eye(3)
-        R_align_cal = R2_cal @ R1_cal
-
-        yaw_offset = self._compute_yaw_offset(
-            samples_3, shoulder_joint, L2, R_align_cal)
-
-        print(f'  → Yaw offset (sensor mounting): {math.degrees(yaw_offset):+.1f}°')
-        print(f'    (subtracted from shoulder_yaw in retargeting; '
-              f'arm-forward pose will read 0°)')
-
         wrist_roll_ref_quat = self._compute_wrist_roll_ref_quat(samples_3)
         print(f'  → Wrist roll reference quaternion saved '
               f'(Step 3 pose = wrist_roll 0° on robot)')
@@ -371,8 +344,8 @@ class CalibrationNode(Node):
         print('  WHY: the arm-down and arm-forward directions from steps 2–3')
         print('       are not perfectly orthogonal (transmitter tilt), so')
         print('       the lateral direction cannot be derived from them alone.')
-        print('       This step directly measures it, enabling a 3-point SVD')
-        print('       frame fit that eliminates the pitch error in lateral raises.')
+        print('       This step directly measures it and completes the body-frame')
+        print('       alignment used by retargeting.')
         print('=' * 60)
         input('Press ENTER, then hold arm straight out to the side...')
 
@@ -388,6 +361,43 @@ class CalibrationNode(Node):
             print(f'\n  → Arm-sideways direction in transmitter frame:')
             print(f'    [{arm_sideways_hat[0]:+.4f}, {arm_sideways_hat[1]:+.4f}, '
                   f'{arm_sideways_hat[2]:+.4f}]')
+
+        # Build the FINAL alignment only after all reference poses are known.
+        # This same function is used by retargeting_node, so the yaw zero cannot
+        # be computed in one frame and consumed in another.
+        reference_cal = {
+            'arm_down_hat_x': float(arm_down_hat[0]),
+            'arm_down_hat_y': float(arm_down_hat[1]),
+            'arm_down_hat_z': float(arm_down_hat[2]),
+            'arm_forward_hat_x': float(arm_forward_hat[0]),
+            'arm_forward_hat_y': float(arm_forward_hat[1]),
+            'arm_forward_hat_z': float(arm_forward_hat[2]),
+        }
+        if arm_sideways_hat is not None:
+            reference_cal.update({
+                'arm_sideways_hat_x': float(arm_sideways_hat[0]),
+                'arm_sideways_hat_y': float(arm_sideways_hat[1]),
+                'arm_sideways_hat_z': float(arm_sideways_hat[2]),
+            })
+        R_align_cal, alignment_mode = alignment_rotation_from_calibration(reference_cal)
+        residuals = calibration_alignment_errors(reference_cal, R_align_cal)
+        print(f'\n  → Alignment method: {alignment_mode}')
+        print('  → Reference residuals: ' + ', '.join(
+            f'{name}={error:.1f}°' for name, error in residuals.items()))
+
+        max_residual = max(residuals.values()) if residuals else 0.0
+        if max_residual > 15.0:
+            print('\n[WARNING] Reference-pose residual exceeds 15°.')
+            print('  The down, forward, and sideways poses are not mutually consistent.')
+            print('  Retargeting will have a large direction-dependent offset.')
+            answer = input('Save this calibration anyway? [y/N]: ').strip().lower()
+            if answer != 'y':
+                print('[Calibration] Not saved. Repeat calibration carefully.')
+                return
+
+        yaw_offset = self._compute_yaw_offset(
+            samples_3, shoulder_joint, L2, R_align_cal)
+        print(f'  → Final yaw zero: {math.degrees(yaw_offset):+.1f}°')
 
         self._save_calibration(L1, L2, computed_total, shoulder_joint,
                                arm_down_hat, arm_forward_hat, yaw_offset,
@@ -456,7 +466,7 @@ class CalibrationNode(Node):
 
     def _compute_yaw_offset(self, samples, shoulder_joint, L2, R_align) -> float:
         """
-        Compute the mean shoulder yaw at the Step 3 "arm forward, arm straight"
+        Compute the mean shoulder yaw at the Step 3 "upper arm forward, forearm up"
         pose.  This is the sensor mounting offset around the forearm axis.
         Subtracting it in retargeting makes yaw = 0 at the calibration pose.
 
@@ -727,7 +737,7 @@ class CalibrationNode(Node):
                 'arm_forward_hat_x': round(float(arm_forward_hat[0]), 4),
                 'arm_forward_hat_y': round(float(arm_forward_hat[1]), 4),
                 'arm_forward_hat_z': round(float(arm_forward_hat[2]), 4),
-                # Shoulder yaw measured at the Step 3 "arm forward, arm straight"
+                # Shoulder yaw measured at the Step 3 "upper arm forward, forearm up"
                 # pose.  This is the sensor mounting rotation around the forearm
                 # axis.  Subtracted from every yaw reading in retargeting so that
                 # the calibration pose gives yaw = 0°.

@@ -98,19 +98,26 @@ int main(int argc, char** argv) {
   ros2ProceduralMpcMotionManager->subscribe(nodeHandle, qos);
 
   // EM tracker arm joint subscriber
-  // Receives 21-element joint state from retargeting_node and forwards to MPC.
+  // Receives the full MPC joint state from retargeting_node and forwards it to MPC.
   // rclcpp::spin_some(nodeHandle) in the main loop processes this at 500 Hz.
+  const auto expectedJointDim = interface.getMpcRobotModel().getJointDim();
   auto emArmSub = nodeHandle->create_subscription<sensor_msgs::msg::JointState>(
       "/arm_joint_target",
       rclcpp::QoS(1).best_effort(),
-      [&mpcTargetTrajectoriesCalculator](const sensor_msgs::msg::JointState::SharedPtr msg) {
-        if (msg->position.size() >= 21) {
-          vector_t q(msg->position.size());
-          for (size_t i = 0; i < msg->position.size(); i++) {
-            q[i] = msg->position[i];
-          }
-          mpcTargetTrajectoriesCalculator.setTargetJointState(q);
+      [&mpcTargetTrajectoriesCalculator, expectedJointDim, nodeHandle](
+          const sensor_msgs::msg::JointState::SharedPtr msg) {
+        if (msg->position.size() != expectedJointDim) {
+          RCLCPP_WARN_THROTTLE(
+              nodeHandle->get_logger(), *nodeHandle->get_clock(), 2000,
+              "Ignoring /arm_joint_target: got %zu positions, expected %zu.",
+              msg->position.size(), expectedJointDim);
+          return;
         }
+        vector_t q(expectedJointDim);
+        for (size_t i = 0; i < expectedJointDim; i++) {
+          q[i] = msg->position[i];
+        }
+        mpcTargetTrajectoriesCalculator.setTargetJointState(q);
       });
   std::cout << "EM arm tracking subscriber ready on /arm_joint_target" << std::endl;
 

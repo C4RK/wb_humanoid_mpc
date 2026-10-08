@@ -14,7 +14,7 @@ Pipeline:
     ↓  Step 4: elbow_joint angle from law of cosines
     ↓  Step 5: shoulder_yaw from forearm orientation relative to upper arm
     ↓  Step 6: clamp to joint limits
-    ↓  pack into full 21-joint MPC state vector
+    ↓  pack into full 22-joint MPC state vector
   /arm_joint_target  (JointState, 50 Hz)
     ↓  C++ subscriber in CentroidalMpcRobotSim.cpp
     ↓  setTargetJointState()
@@ -30,10 +30,19 @@ import math
 import numpy as np
 import rclpy
 from rclpy.node import Node
+from rclpy.executors import ExternalShutdownException
 from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import JointState
 
 from remote_control.calibration_node import load_calibration, CALIBRATION_FILE
+from remote_control.retargeting_kinematics import (
+    calibration_alignment_errors,
+    quaternion_to_matrix,
+    sensor_mount_from_reference,
+    shoulder_pitch_roll,
+    shoulder_yaw as solve_shoulder_yaw,
+    wrist_roll as solve_wrist_roll,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -222,10 +231,20 @@ class RetargetingNode(Node):
                     'No arm_forward_hat in calibration file. '
                     'Re-run calibration to fix tracking errors.')
 
+            alignment_errors = calibration_alignment_errors(cal, self.R_align)
+            if alignment_errors:
+                residual_text = ', '.join(
+                    f'{name}={error:.1f}°' for name, error in alignment_errors.items())
+                self.get_logger().info(f'Calibration reference residuals: {residual_text}')
+                if max(alignment_errors.values()) > 15.0:
+                    self.get_logger().warn(
+                        'Calibration reference poses are inconsistent (>15° residual). '
+                        'Simulation can run, but repeat calibration before accuracy experiments.')
+
             # Yaw offset: sensor mounting rotation around the forearm axis.
             # Computed during calibration from the Step 3 "arm forward" pose.
             # Subtract from every computed shoulder yaw so that yaw = 0 at
-            # the calibration pose (arm forward, arm straight, no intentional twist).
+            # the calibration pose (upper arm forward, forearm up, neutral wrist).
             self.yaw_offset = cal.get('yaw_offset', 0.0)
             self.get_logger().info(
                 f'Yaw offset (sensor mounting): {math.degrees(self.yaw_offset):+.1f}°'
@@ -238,10 +257,48 @@ class RetargetingNode(Node):
             wrist_roll_ref = cal.get('wrist_roll_ref_quat', None)
             if wrist_roll_ref:
                 self.R_wrist_roll_ref = _quat_to_matrix(np.array(wrist_roll_ref))
+
+                # Reconstruct the Step 3 zero using the final alignment matrix.
+                # Older calibration files computed yaw_offset before the sideways
+                # reference was available, then changed R_align afterwards.  That
+                # made the saved zero inconsistent by tens of degrees.  Deriving
+                # it again from the saved Step 3 direction and quaternion keeps
+                # yaw and wrist zero tied to the same final frame.
+                reference_angles = (-math.pi / 2.0, 0.0, 0.0, 0.0)
+                if cal.get('arm_forward_hat_x') is not None:
+                    upper_ref = self.R_align @ np.array([
+                        cal['arm_forward_hat_x'],
+                        cal['arm_forward_hat_y'],
+                        cal['arm_forward_hat_z'],
+                    ])
+                    upper_ref /= np.linalg.norm(upper_ref)
+                    sensor_ref_aligned = self.R_align @ self.R_wrist_roll_ref
+                    forearm_ref = sensor_ref_aligned @ FOREARM_LOCAL_AXIS
+                    forearm_ref /= np.linalg.norm(forearm_ref)
+                    pitch_ref, roll_ref = shoulder_pitch_roll(upper_ref)
+                    derived_yaw_offset, observable = solve_shoulder_yaw(
+                        upper_ref, forearm_ref, pitch_ref, roll_ref,
+                        yaw_offset=0.0, fallback=self.yaw_offset)
+                    elbow_ref = math.asin(float(np.clip(
+                        np.dot(upper_ref, forearm_ref), -1.0, 1.0)))
+                    if observable:
+                        saved_yaw_offset = self.yaw_offset
+                        self.yaw_offset = derived_yaw_offset
+                        if abs(self.yaw_offset - saved_yaw_offset) > math.radians(2.0):
+                            self.get_logger().warn(
+                                'Saved yaw zero used an older alignment; '
+                                f'using Step 3 zero {math.degrees(self.yaw_offset):+.1f}° '
+                                f'instead of {math.degrees(saved_yaw_offset):+.1f}°.')
+                    reference_angles = (pitch_ref, roll_ref, 0.0, elbow_ref)
+
+                self.R_sensor_mount = sensor_mount_from_reference(
+                    self.R_align, self.R_wrist_roll_ref, reference_angles)
                 self.has_wrist_roll = True
-                self.get_logger().info('Wrist roll reference loaded — pronation/supination active.')
+                self.get_logger().info(
+                    'Wrist roll reference loaded — shoulder motion compensation active.')
             else:
                 self.R_wrist_roll_ref = np.eye(3)
+                self.R_sensor_mount = np.eye(3)
                 self.has_wrist_roll = False
                 self.get_logger().warn(
                     'No wrist_roll_ref_quat in calibration — re-run calibration to enable wrist tracking.'
@@ -250,14 +307,20 @@ class RetargetingNode(Node):
             self.get_logger().fatal(str(e))
             raise
 
-        # Working copy of the full 21-joint state.
-        # Arm joints (indices 13-16) are overwritten each callback; rest stays at default.
+        # Continuity values are also used through singular configurations.  With
+        # an almost straight elbow, shoulder yaw is not observable from one
+        # forearm receiver, so keeping the last valid value prevents jumps.
+        self._last_shoulder_yaw = 0.0
+        self._last_wrist_roll = 0.0
+
+        # Working copy of the full 22-joint state.
+        # Arm joints (indices 13-17) are overwritten each callback; rest stays at default.
         self._joint_state = list(DEFAULT_JOINT_STATE)
 
         # Subscriber: EM tracker pose at 50 Hz
         self.create_subscription(PoseStamped, '/em/pose', self._on_pose_received, 10)
 
-        # Publisher: full 21-joint state sent to MPC
+        # Publisher: full 22-joint state sent to MPC
         self._pub = self.create_publisher(JointState, '/arm_joint_target', 10)
 
         self.get_logger().info('Retargeting node ready. Listening on /em/pose ...')
@@ -288,7 +351,7 @@ class RetargetingNode(Node):
         if angles is None:
             return  # unreachable configuration — skip this frame
 
-        # Write the 4 left-arm angles into the full joint state
+        # Write the 5 left-arm angles into the full joint state
         for i, state_idx in enumerate(LEFT_ARM_INDICES):
             self._joint_state[state_idx] = angles[i]
 
@@ -303,7 +366,7 @@ class RetargetingNode(Node):
         # Publish  — C++ subscriber picks this up and calls setTargetJointState()
         out = JointState()
         out.header.stamp = msg.header.stamp  # keep original timestamp
-        out.position = list(self._joint_state)  # 21 floats
+        out.position = list(self._joint_state)  # 22 floats
         self._pub.publish(out)
 
     # ------------------------------------------------------------------
@@ -358,6 +421,7 @@ class RetargetingNode(Node):
         # the same before and after — only directions change.
         E          = self.R_align @ E
         forearm_dir = self.R_align @ forearm_dir
+        R_sensor_aligned = self.R_align @ R
 
         E_hat = E / (elbow_dist + 1e-9)  # unit vector: shoulder → elbow direction
 
@@ -422,39 +486,43 @@ class RetargetingNode(Node):
         # ----------------------------------------------------------------
         # Step 5 — Shoulder yaw (upper arm axial twist)
         #
-        # Reference direction: the robot's zero-yaw direction at the current
-        # shoulder_pitch.  From the G1 URDF: at all shoulder joints = 0 the
-        # forearm points forward (+X).  Applying only Ry(pitch) gives:
-        #
-        #   ref = [cos(pitch), 0, -sin(pitch)]
-        #
-        # This is always a unit vector AND always perpendicular to E_hat
-        # (proof: dot = cos(p)*E_hat[0] + 0 - sin(p)*E_hat[2], and
-        # shoulder_pitch = atan2(-E_hat[0], -E_hat[2]) → cos(p) = -E_hat[2]/r,
-        # sin(p) = -E_hat[0]/r → dot = 0).  No projection step required.
-        #
-        # Verified on G1 URDF:
-        #   pitch=0   (arm down):     ref=[1,0,0]=forward,  yaw=0 → elbow forward  ✓
-        #   pitch=-90 (arm forward):  ref=[0,0,1]=up,       yaw=0 → elbow up       ✓
-        #   pitch=0, roll=90 (sideways): ref=[1,0,0]=forward, yaw=0 → forearm forward ✓
+        # The forearm component perpendicular to the upper arm identifies the
+        # elbow plane and therefore shoulder yaw.  Near full extension that
+        # component vanishes; yaw is then unobservable with one receiver and
+        # the last stable value is retained.
         # ----------------------------------------------------------------
-        shoulder_yaw = 0.0
+        shoulder_yaw, yaw_observable = solve_shoulder_yaw(
+            E_hat,
+            forearm_dir,
+            shoulder_pitch,
+            shoulder_roll,
+            yaw_offset=self.yaw_offset,
+            fallback=self._last_shoulder_yaw,
+        )
+        if yaw_observable:
+            self._last_shoulder_yaw = shoulder_yaw
 
         # ----------------------------------------------------------------
         # Step 6 — Wrist roll (forearm axial rotation = pronation / supination)
         #
-        # Measured as the rotation of the sensor around its own Y-axis (forearm
-        # axis) relative to the Step 3 calibration pose.
-        #
-        # R_rel = R_ref^T @ R_sensor  (rotation in the calibration sensor frame)
-        # If only the wrist has rotated by angle θ:  R_rel = Ry(θ)
-        #   → wrist_roll = atan2(R_rel[0,2], R_rel[0,0])
-        #
-        # When the shoulder has also moved, R_rel has additional components, but
-        # the Y-rotation extraction (atan2 of [0,2] and [0,0] elements) still
-        # gives a good approximation of the forearm twist.
+        # Calibration Step 3 identifies the fixed sensor mounting rotation.
+        # Remove the reconstructed shoulder and elbow rotations first, then
+        # extract only the residual twist around the robot forearm (+X) axis.
+        # This prevents ordinary arm raising from appearing as wrist rotation.
         # ----------------------------------------------------------------
-        wrist_roll = 0.0
+        if self.has_wrist_roll:
+            wrist_roll = solve_wrist_roll(
+                R_sensor_aligned,
+                self.R_sensor_mount,
+                shoulder_pitch,
+                shoulder_roll,
+                shoulder_yaw,
+                elbow_scaled,
+                fallback=self._last_wrist_roll,
+            )
+            self._last_wrist_roll = wrist_roll
+        else:
+            wrist_roll = 0.0
 
         # ----------------------------------------------------------------
         # Step 7 — Apply joint limits
@@ -508,13 +576,7 @@ def _quat_to_matrix(q: np.ndarray) -> np.ndarray:
     Maps vectors from the local (receiver) frame to the world (transmitter) frame:
         v_shoulder = R @ v_local
     """
-    q = q / np.linalg.norm(q)  # normalize to avoid drift errors
-    w, x, y, z = q
-    return np.array([
-        [1 - 2*(y*y + z*z),   2*(x*y - z*w),     2*(x*z + y*w)],
-        [    2*(x*y + z*w),   1 - 2*(x*x + z*z),  2*(y*z - x*w)],
-        [    2*(x*z - y*w),   2*(y*z + x*w),      1 - 2*(x*x + y*y)],
-    ])
+    return quaternion_to_matrix(q)
 
 
 def _clamp(value: float, lo: float, hi: float) -> float:
@@ -528,11 +590,12 @@ def main(args=None):
     node = RetargetingNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
 
 
 if __name__ == '__main__':
