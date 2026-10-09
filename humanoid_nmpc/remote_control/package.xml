@@ -11,6 +11,7 @@
   <depend>rclcpp</depend>
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>humanoid_mpc_msgs</depend>
 
   <exec_depend>python3-pygame</exec_depend>
