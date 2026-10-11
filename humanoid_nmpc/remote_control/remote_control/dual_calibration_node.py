@@ -17,24 +17,39 @@ from rclpy.node import Node
 import yaml
 
 from remote_control.dual_retargeting_kinematics import (
-    fit_body_alignment,
+    ROTATION_AS_REPORTED,
+    ROTATION_CONVENTIONS,
+    ROTATION_TRANSPOSE_REPORTED,
+    apply_rotation_convention,
+    fit_position_direction_calibration,
+    fit_single_direction_calibration,
     mean_rotation,
-    reference_mounts,
-    solve_elbow_pivot,
-    solve_shoulder_pivot,
+    relative_rotation_errors,
+    rotation_error_deg,
 )
-from remote_control.retargeting_kinematics import quaternion_to_matrix
+from remote_control.retargeting_kinematics import (
+    FOREARM_ZERO_AXIS,
+    UPPER_ARM_ZERO_AXIS,
+    arm_frames,
+    quaternion_to_matrix,
+)
 
 
 DUAL_CALIBRATION_FILE = (
     '/wb_humanoid_mpc_ws/src/wb_humanoid_mpc/'
     'humanoid_nmpc/remote_control/config/wmet_dual_calibration.yaml')
+CALIBRATION_LOG_DIR = '/wb_humanoid_mpc_ws/calibration_logs'
 
 STATIC_SECONDS = 4.0
-SHOULDER_SWEEP_SECONDS = 12.0
-ELBOW_SWEEP_SECONDS = 15.0
 REFERENCE_SECONDS = 2.0
 REFERENCE_REPEATS = 3
+ASSIGNMENT_CHECK_SECONDS = 6.0
+REFERENCE_REPEAT_LIMIT_DEG = 20.0
+HARD_PIVOT_RMS_LIMIT_M = 0.04
+MIN_UPPER_ARM_LENGTH_M = 0.15
+MAX_UPPER_ARM_LENGTH_M = 0.45
+MIN_FOREARM_RECEIVER_DISTANCE_M = 0.08
+MAX_FOREARM_RECEIVER_DISTANCE_M = 0.40
 
 
 @dataclass(frozen=True)
@@ -73,8 +88,34 @@ def load_dual_calibration(path: str = DUAL_CALIBRATION_FILE) -> dict:
     with open(path, 'r', encoding='utf-8') as stream:
         data = yaml.safe_load(stream)
     calibration = data.get('calibration', {}) if data else {}
-    if calibration.get('mode') != 'dual_receiver_functional':
+    mode = calibration.get('mode')
+    if mode not in ('dual_receiver_functional', 'dual_receiver_orientation',
+                    'dual_receiver_direction', 'dual_receiver_hybrid'):
         raise ValueError(f'{path} is not a dual-receiver calibration file')
+    quality = calibration.get('quality', {})
+    failures = []
+    reference_error = float(quality.get('reference_max_error_deg', float('inf')))
+    if not math.isfinite(reference_error) or reference_error > 15.0:
+        failures.append('reference-pose error exceeds 15 degrees')
+    if mode == 'dual_receiver_functional':
+        shoulder_rms = float(quality.get('shoulder_pivot_rms_m', float('inf')))
+        elbow_rms = float(quality.get('elbow_pivot_rms_m', float('inf')))
+        if not math.isfinite(shoulder_rms) or shoulder_rms > HARD_PIVOT_RMS_LIMIT_M:
+            failures.append('shoulder pivot RMS exceeds 40 mm')
+        if not math.isfinite(elbow_rms) or elbow_rms > HARD_PIVOT_RMS_LIMIT_M:
+            failures.append('elbow pivot RMS exceeds 40 mm')
+        upper_length = float(calibration.get('upper_arm_length_m', float('nan')))
+        if not MIN_UPPER_ARM_LENGTH_M <= upper_length <= MAX_UPPER_ARM_LENGTH_M:
+            failures.append('estimated upper-arm length is implausible')
+        forearm_distance = float(
+            calibration.get('forearm_effective_length_m', float('nan')))
+        if not (MIN_FOREARM_RECEIVER_DISTANCE_M <= forearm_distance <=
+                MAX_FOREARM_RECEIVER_DISTANCE_M):
+            failures.append('elbow-to-forearm-receiver distance is implausible')
+    if failures:
+        raise ValueError(
+            f'Dual calibration at {path} failed safety/quality checks: '
+            + '; '.join(failures) + '. Run dual_calibration_node again.')
     return calibration
 
 
@@ -140,10 +181,21 @@ class DualCalibrationNode(Node):
     def _run_sequence(self):
         if os.path.exists(DUAL_CALIBRATION_FILE):
             print(f'\n[Dual calibration] Existing file: {DUAL_CALIBRATION_FILE}')
-            answer = input('Use existing dual-receiver calibration? [Y/n]: ').strip().lower()
-            if answer != 'n':
-                print('[Dual calibration] Existing calibration kept.')
-                return
+            try:
+                load_dual_calibration(DUAL_CALIBRATION_FILE)
+            except (OSError, TypeError, ValueError, yaml.YAMLError) as exc:
+                print(f'[Dual calibration] Existing calibration rejected: {exc}')
+                print('[Dual calibration] A new calibration will be collected.')
+            else:
+                print('[Dual calibration] Recalibrate after removing, charging, or '
+                      'reattaching any device.')
+                answer = input(
+                    'Reuse existing calibration only if no device moved? [y/N]: '
+                ).strip().lower()
+                if answer == 'y':
+                    print('[Dual calibration] Existing calibration kept.')
+                    return
+                print('[Dual calibration] Collecting a new calibration.')
 
         print('\n[Dual calibration] Waiting for synchronized receiver pairs...')
         while rclpy.ok():
@@ -177,141 +229,261 @@ class DualCalibrationNode(Node):
 
         # --------------------------------------------------------------
         print('\n' + '=' * 68)
-        print('STEP 1: Shoulder functional centre')
-        print(f'For {SHOULDER_SWEEP_SECONDS:.0f} seconds, keep the elbow at a comfortable fixed bend.')
-        print('Move the upper arm slowly forward, sideways and diagonally.')
-        print('Include small upper-arm twists. Keep the torso still.')
+        print('STEP 1: Receiver assignment check')
+        print(f'For {ASSIGNMENT_CHECK_SECONDS:.0f} seconds, keep the torso and LEFT upper arm still.')
+        print('Repeatedly bend/straighten only the elbow and turn the palm up/down.')
+        print('The upper-arm receiver should remain nearly still while the forearm moves.')
         print('=' * 68)
-        input('Press ENTER, then begin the shoulder sweep...')
-        shoulder_samples = self._collect_samples(SHOULDER_SWEEP_SECONDS)
-        p_u, R_u, _, _ = self._arrays(shoulder_samples)
-        shoulder_result = solve_shoulder_pivot(p_u, R_u)
-        self._print_pivot('shoulder', shoulder_result)
-        if shoulder_result.rank < 6:
-            print('[ERROR] Shoulder calibration is rank deficient. Use more varied directions.')
+        input('Press ENTER, then begin the elbow-only motion...')
+        assignment_samples = self._collect_samples(ASSIGNMENT_CHECK_SECONDS)
+        _, assignment_R_u, _, assignment_R_f = self._arrays(assignment_samples)
+        upper_excursion = self._rotation_excursion_deg(assignment_R_u)
+        forearm_excursion = self._rotation_excursion_deg(assignment_R_f)
+        print('  Receiver orientation excursion:')
+        print(f'    upper topic:   {upper_excursion:5.1f} deg')
+        print(f'    forearm topic: {forearm_excursion:5.1f} deg')
+        if (upper_excursion > 15.0 or forearm_excursion < 25.0 or
+                forearm_excursion < upper_excursion + 15.0):
+            print('[ERROR] Receiver assignment check failed.')
+            print('Confirm 10.42.0.143 is attached to the upper arm, keep the shoulder')
+            print('still, and move only the elbow/forearm through a wide range.')
+            print('[Dual calibration] Stopped without saving.')
             return
-        if shoulder_result.rms_m > 0.02 or shoulder_result.condition_number > 200.0:
-            print('[WARNING] Shoulder fit quality is poor; tape may have shifted or motion was limited.')
-            if input('Save this fit and continue? [y/N]: ').strip().lower() != 'y':
-                return
 
-        # --------------------------------------------------------------
-        print('\n' + '=' * 68)
-        print('STEP 2: Elbow functional centre')
-        print(f'For {ELBOW_SWEEP_SECONDS:.0f} seconds, keep the upper arm roughly in front of you.')
-        print('Continuously bend and straighten the elbow through a wide range.')
-        print('Also rotate the forearm palm-up/palm-down. Move slowly; keep the wrist rigid.')
-        print('=' * 68)
-        input('Press ENTER, then begin the elbow/forearm sweep...')
-        elbow_samples = self._collect_samples(ELBOW_SWEEP_SECONDS)
-        p_u, R_u, p_f, R_f = self._arrays(elbow_samples)
-        elbow_result = solve_elbow_pivot(p_u, R_u, p_f, R_f)
-        self._print_pivot('elbow', elbow_result)
-        if elbow_result.rank < 6:
-            print('[ERROR] Elbow calibration is rank deficient.')
-            print('Repeat with both elbow flexion and palm-up/palm-down rotation.')
-            return
-        if elbow_result.rms_m > 0.02 or elbow_result.condition_number > 300.0:
-            print('[WARNING] Elbow fit quality is poor; check both receiver attachments.')
-            if input('Save this fit and continue? [y/N]: ').strip().lower() != 'y':
-                return
-
-        sensor_to_shoulder = shoulder_result.first_local_offset
-        shoulder_center = shoulder_result.second_local_offset_or_center
-        upper_sensor_to_elbow = elbow_result.first_local_offset
-        forearm_sensor_to_elbow = elbow_result.second_local_offset_or_center
-        upper_axis_local = upper_sensor_to_elbow - sensor_to_shoulder
-        upper_length = float(np.linalg.norm(upper_axis_local))
-        forearm_axis_local = -forearm_sensor_to_elbow
-        forearm_effective_length = float(np.linalg.norm(forearm_axis_local))
-        if upper_length < 0.10 or forearm_effective_length < 0.10:
-            print('[ERROR] A recovered segment vector is too short; functional fit is invalid.')
-            return
-        upper_axis_local /= upper_length
-        forearm_axis_local /= forearm_effective_length
-        print(f'  Estimated upper-arm length:          {upper_length*100:.1f} cm')
-        print(f'  Elbow-to-forearm-receiver distance:  {forearm_effective_length*100:.1f} cm')
-
-        # --------------------------------------------------------------
+        # Three poses span independent upper-arm directions.  STRAIGHT_DOWN
+        # adds an easy forearm-direction constraint so the direction fit is
+        # overdetermined and checked near full elbow extension.
         reference_specs = [
             ('down',
-             'Let the LEFT upper arm hang straight down. Keep the torso upright.',
-             np.array([0.0, 0.0, -1.0])),
+             'LEFT upper arm vertical down; elbow bent 90 degrees;\n'
+             'forearm horizontal and pointing straight forward; palm faces\n'
+             'right/inward and thumb points up.',
+             (0.0, 0.0, 0.0, 0.0)),
             ('forward',
-             'Upper arm straight forward at shoulder height; elbow 90 degrees;\n'
-             'forearm straight up; LEFT palm faces right/inward; thumb points forward.',
-             np.array([1.0, 0.0, 0.0])),
+             'LEFT upper arm horizontal and pointing forward; elbow bent 90 degrees;\n'
+             'forearm straight up without twisting it; palm faces right/inward;\n'
+             'thumb points backward toward your body.',
+             (-math.pi / 2.0, 0.0, 0.0, 0.0)),
             ('sideways',
-             'Upper arm straight out to the LEFT at shoulder height; torso upright.',
-             np.array([0.0, 1.0, 0.0])),
+             'LEFT arm straight and horizontal to the left; straighten the elbow;\n'
+             'palm faces down and thumb points forward.',
+             (0.0, math.pi / 2.0, 0.0, math.pi / 2.0)),
+            ('straight_down',
+             'LEFT arm relaxed and straight down beside the body; fully extend\n'
+             'the elbow; palm faces right/inward and thumb points forward.',
+             (0.0, 0.0, 0.0, math.pi / 2.0)),
         ]
-        all_measured = []
-        all_targets = []
-        reference_samples = {}
-        for label, instruction, target in reference_specs:
-            samples_for_label = []
+        reference_labels = tuple(spec[0] for spec in reference_specs)
+        upper_reference_positions = []
+        forearm_reference_positions = []
+        upper_reference_rotations = []
+        forearm_reference_rotations = []
+        target_upper_rotations = []
+        target_forearm_rotations = []
+        labels = []
+        for label, instruction, target_angles in reference_specs:
+            target_upper, target_forearm = arm_frames(*target_angles)
             print('\n' + '=' * 68)
             print(f'REFERENCE: {label.upper()} ({REFERENCE_REPEATS} repeats)')
             print(instruction)
+            print('Between repeats, leave the pose, rebuild it carefully, then press ENTER.')
             print('=' * 68)
-            for repeat in range(REFERENCE_REPEATS):
-                input(f'Press ENTER for repeat {repeat+1}/{REFERENCE_REPEATS}, then hold still...')
-                held = self._collect_samples(REFERENCE_SECONDS)
-                samples_for_label.extend(held)
-                _, rotations, _, _ = self._arrays(held)
-                direction = np.mean(
-                    np.einsum('nij,j->ni', rotations, upper_axis_local), axis=0)
-                direction /= np.linalg.norm(direction)
-                all_measured.append(direction)
-                all_targets.append(target)
-            reference_samples[label] = samples_for_label
+            while True:
+                pose_upper_positions = []
+                pose_forearm_positions = []
+                pose_upper_rotations = []
+                pose_forearm_rotations = []
+                for repeat in range(REFERENCE_REPEATS):
+                    input(
+                        f'Press ENTER for repeat {repeat+1}/{REFERENCE_REPEATS}, '
+                        'then hold still...')
+                    held = self._collect_samples(REFERENCE_SECONDS)
+                    held_p_u, held_R_u, held_p_f, held_R_f = self._arrays(held)
+                    pose_upper_positions.append(np.mean(held_p_u, axis=0))
+                    pose_forearm_positions.append(np.mean(held_p_f, axis=0))
+                    pose_upper_rotations.append(mean_rotation(held_R_u))
+                    pose_forearm_rotations.append(mean_rotation(held_R_f))
 
-        R_align, reference_errors = fit_body_alignment(
-            np.array(all_measured), np.array(all_targets))
-        print('\n  Reference angular residuals:')
-        labels = [spec[0] for spec in reference_specs for _ in range(REFERENCE_REPEATS)]
-        for label in ('down', 'forward', 'sideways'):
-            values = [error for name, error in zip(labels, reference_errors) if name == label]
-            print(f'    {label:8s}: mean={np.mean(values):5.2f} deg, max={np.max(values):5.2f} deg')
-        max_reference_error = float(np.max(reference_errors))
+                if self._print_pose_repeatability(
+                        np.asarray(pose_upper_rotations),
+                        np.asarray(pose_forearm_rotations), label):
+                    upper_reference_positions.extend(pose_upper_positions)
+                    forearm_reference_positions.extend(pose_forearm_positions)
+                    upper_reference_rotations.extend(pose_upper_rotations)
+                    forearm_reference_rotations.extend(pose_forearm_rotations)
+                    target_upper_rotations.extend(
+                        [target_upper] * REFERENCE_REPEATS)
+                    target_forearm_rotations.extend(
+                        [target_forearm] * REFERENCE_REPEATS)
+                    labels.extend([label] * REFERENCE_REPEATS)
+                    break
+
+                print(f'\n[RETRY] Only the {label.upper()} reference will be recollected;')
+                print('the earlier accepted reference poses are retained. Rebuild all')
+                print('three repeats with the same arm, palm and thumb directions.')
+
+        target_upper_directions = np.array([
+            rotation @ UPPER_ARM_ZERO_AXIS
+            for rotation in target_upper_rotations
+        ])
+        target_forearm_directions = np.array([
+            rotation @ FOREARM_ZERO_AXIS
+            for rotation in target_forearm_rotations
+        ])
+        reported_upper_rotations = np.array(upper_reference_rotations)
+        reported_forearm_rotations = np.array(forearm_reference_rotations)
+        diagnostic_path = self._save_reference_diagnostic(
+            np.array(upper_reference_positions),
+            np.array(forearm_reference_positions),
+            reported_upper_rotations,
+            reported_forearm_rotations,
+            np.array(target_upper_rotations),
+            np.array(target_forearm_rotations),
+            labels)
+        print(f'  Reference diagnostic saved: {diagnostic_path}')
+
+        position_fit = fit_position_direction_calibration(
+            np.array(upper_reference_positions),
+            target_upper_directions)
+
+        convention_fits = {}
+        for convention in ROTATION_CONVENTIONS:
+            corrected_forearm = apply_rotation_convention(
+                reported_forearm_rotations, convention)
+            fit = fit_single_direction_calibration(
+                corrected_forearm,
+                target_forearm_directions)
+            relative_errors = relative_rotation_errors(
+                corrected_forearm,
+                np.asarray(target_forearm_rotations),
+                position_fit.rotation_tx_to_body)
+            convention_fits[convention] = (
+                float(np.sqrt(np.mean(np.square(fit.errors_deg)))),
+                float(np.max(fit.errors_deg)),
+                float(np.sqrt(np.mean(np.square(relative_errors)))),
+                float(np.max(relative_errors)),
+                fit,
+                corrected_forearm,
+            )
+        print('\n  Forearm quaternion convention diagnostic:')
+        for convention in ROTATION_CONVENTIONS:
+            direction_rms, direction_max, relative_rms, relative_max, _, _ = (
+                convention_fits[convention])
+            print(f'    {convention:20s}: direction RMS={direction_rms:5.2f}, '
+                  f'max={direction_max:5.2f} deg; relative-motion '
+                  f'RMS={relative_rms:5.2f}, max={relative_max:5.2f} deg')
+        rotation_convention = min(
+            ROTATION_CONVENTIONS,
+            key=lambda name: convention_fits[name][2])
+        _, _, _, _, forearm_fit, corrected_forearm_rotations = (
+            convention_fits[rotation_convention])
+        print(f'  Selected rotation convention from relative motion: '
+              f'{rotation_convention}')
+
+        upper_position_align = position_fit.rotation_tx_to_body
+        forearm_orientation_align = forearm_fit.rotation_tx_to_body
+        forearm_axis_local = forearm_fit.axis_local
+        upper_reference_errors = position_fit.direction_errors_deg
+        forearm_reference_errors = forearm_fit.errors_deg
+
+        _, wrist_zero_target = arm_frames(0.0, 0.0, 0.0, 0.0)
+        wrist_zero_forearm_rotations = [
+            rotation for rotation, label in zip(corrected_forearm_rotations, labels)
+            if label == 'down'
+        ]
+        forearm_mount = mean_rotation(np.array([
+            wrist_zero_target.T @ forearm_orientation_align @ rotation
+            for rotation in wrist_zero_forearm_rotations
+        ]))
+        forearm_twist_reference_errors = np.array([
+            rotation_error_deg(
+                forearm_orientation_align @ rotation @ forearm_mount.T,
+                wrist_zero_target)
+            for rotation in wrist_zero_forearm_rotations
+        ])
+
+        position_rms_m = float(np.sqrt(np.mean(
+            np.square(position_fit.position_errors_m))))
+        position_max_m = float(np.max(position_fit.position_errors_m))
+        print('\n  Hybrid position/orientation residuals:')
+        for label in reference_labels:
+            values = [
+                error for name, error in zip(labels, upper_reference_errors)
+                if name == label
+            ]
+            print(f'    upper position {label:8s}: mean={np.mean(values):5.2f} deg, '
+                  f'max={np.max(values):5.2f} deg')
+        for label in reference_labels:
+            values = [
+                error for name, error in zip(labels, forearm_reference_errors)
+                if name == label
+            ]
+            print(f'    forearm {label:6s}: mean={np.mean(values):5.2f} deg, '
+                  f'max={np.max(values):5.2f} deg')
+        print(f'    forearm twist repeatability: '
+              f'mean={np.mean(forearm_twist_reference_errors):5.2f} deg, '
+              f'max={np.max(forearm_twist_reference_errors):5.2f} deg')
+        print(f'    upper position model: radius='
+              f'{position_fit.receiver_radius_m*100:.1f} cm, '
+              f'RMS={position_rms_m*1000:.1f} mm, '
+              f'max={position_max_m*1000:.1f} mm')
+        max_reference_error = float(max(
+            np.max(upper_reference_errors), np.max(forearm_reference_errors),
+            np.max(forearm_twist_reference_errors)))
+        if not 0.08 <= position_fit.receiver_radius_m <= 0.35:
+            print('[ERROR] Upper receiver position radius is implausible.')
+            print('[Dual calibration] Stopped without saving.')
+            return
+        if position_rms_m > 0.03 or position_max_m > 0.05:
+            print('[ERROR] Upper receiver position model error is too large.')
+            print('[Dual calibration] Stopped without saving. Keep the torso and')
+            print('transmitter fixed, then repeat the reference poses.')
+            return
+        if max_reference_error > 15.0:
+            print('[ERROR] Reference-pose error exceeds 15 degrees.')
+            print('[Dual calibration] Stopped without saving. Repeat the reference poses.')
+            return
         if max_reference_error > 10.0:
-            print('[WARNING] Reference poses disagree by more than 10 degrees.')
+            print('[WARNING] Reference-pose error exceeds 10 degrees.')
             if input('Save calibration anyway? [y/N]: ').strip().lower() != 'y':
-                print('[Dual calibration] Cancelled. Repeat the three reference poses.')
+                print('[Dual calibration] Cancelled. Repeat the reference poses.')
                 return
 
-        forward = reference_samples['forward']
-        _, forward_R_u, _, forward_R_f = self._arrays(forward)
-        upper_mount, forearm_mount = reference_mounts(
-            R_align, mean_rotation(forward_R_u), mean_rotation(forward_R_f))
-
         calibration = {
-            'version': 2,
-            'mode': 'dual_receiver_functional',
+            'version': 7,
+            'mode': 'dual_receiver_hybrid',
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
-            'shoulder_center_tx_m': _vector_list(shoulder_center),
-            'upper_sensor_to_shoulder_m': _vector_list(sensor_to_shoulder),
-            'upper_sensor_to_elbow_m': _vector_list(upper_sensor_to_elbow),
-            'forearm_sensor_to_elbow_m': _vector_list(forearm_sensor_to_elbow),
-            'upper_axis_local': _vector_list(upper_axis_local),
+            'reference_pose_labels': list(reference_labels),
+            'rotation_convention': rotation_convention,
+            'rotation_convention_method': 'relative_reference_motion',
             'forearm_axis_local': _vector_list(forearm_axis_local),
-            'upper_arm_length_m': round(upper_length, 6),
-            'forearm_effective_length_m': round(forearm_effective_length, 6),
-            'rotation_tx_to_body': _matrix_list(R_align),
-            'upper_sensor_mount_rotation': _matrix_list(upper_mount),
+            'upper_position_rotation_tx_to_body': _matrix_list(
+                upper_position_align),
+            'upper_shoulder_center_tx_m': _vector_list(
+                position_fit.shoulder_center_tx_m),
+            'upper_receiver_radius_m': round(
+                position_fit.receiver_radius_m, 8),
+            'forearm_rotation_tx_to_body': _matrix_list(
+                forearm_orientation_align),
             'forearm_sensor_mount_rotation': _matrix_list(forearm_mount),
             'quality': {
                 **{key: round(float(value), 8) for key, value in static_quality.items()},
-                'shoulder_pivot_rms_m': round(shoulder_result.rms_m, 8),
-                'shoulder_condition_number': round(shoulder_result.condition_number, 3),
-                'shoulder_inliers': shoulder_result.inlier_count,
-                'shoulder_samples': shoulder_result.sample_count,
-                'elbow_pivot_rms_m': round(elbow_result.rms_m, 8),
-                'elbow_condition_number': round(elbow_result.condition_number, 3),
-                'elbow_inliers': elbow_result.inlier_count,
-                'elbow_samples': elbow_result.sample_count,
+                'upper_assignment_excursion_deg': round(upper_excursion, 4),
+                'forearm_assignment_excursion_deg': round(forearm_excursion, 4),
+                'as_reported_relative_rotation_rms_deg': round(
+                    convention_fits[ROTATION_AS_REPORTED][2], 4),
+                'transpose_relative_rotation_rms_deg': round(
+                    convention_fits[ROTATION_TRANSPOSE_REPORTED][2], 4),
                 'reference_max_error_deg': round(max_reference_error, 4),
-                'reference_errors_deg': [round(float(v), 4) for v in reference_errors],
+                'upper_position_direction_errors_deg': [
+                    round(float(value), 4) for value in upper_reference_errors],
+                'forearm_direction_errors_deg': [
+                    round(float(value), 4) for value in forearm_reference_errors],
+                'upper_position_model_rms_m': round(position_rms_m, 8),
+                'upper_position_model_max_m': round(position_max_m, 8),
+                'forearm_twist_repeatability_errors_deg': [
+                    round(float(value), 4)
+                    for value in forearm_twist_reference_errors],
             },
         }
         self._save(calibration)
@@ -340,12 +512,14 @@ class DualCalibrationNode(Node):
         return samples
 
     @staticmethod
-    def _arrays(samples):
+    def _arrays(samples, rotation_convention=ROTATION_AS_REPORTED):
+        upper_rotations = np.array([s.upper_rotation for s in samples])
+        forearm_rotations = np.array([s.forearm_rotation for s in samples])
         return (
             np.array([s.upper_position for s in samples]),
-            np.array([s.upper_rotation for s in samples]),
+            apply_rotation_convention(upper_rotations, rotation_convention),
             np.array([s.forearm_position for s in samples]),
-            np.array([s.forearm_rotation for s in samples]),
+            apply_rotation_convention(forearm_rotations, rotation_convention),
         )
 
     @staticmethod
@@ -356,6 +530,80 @@ class DualCalibrationNode(Node):
             cosine = (float(np.trace(centre.T @ rotation)) - 1.0) / 2.0
             angles.append(math.acos(float(np.clip(cosine, -1.0, 1.0))))
         return math.degrees(float(np.sqrt(np.mean(np.square(angles)))))
+
+    @staticmethod
+    def _rotation_excursion_deg(rotations):
+        centre = mean_rotation(rotations)
+        errors = [rotation_error_deg(rotation, centre) for rotation in rotations]
+        return float(np.percentile(errors, 95.0))
+
+    @staticmethod
+    def _save_reference_diagnostic(upper_positions, forearm_positions,
+                                   upper_rotations, forearm_rotations,
+                                   target_upper_rotations,
+                                   target_forearm_rotations, labels):
+        os.makedirs(CALIBRATION_LOG_DIR, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        path = os.path.join(
+            CALIBRATION_LOG_DIR,
+            f'dual_reference_{timestamp}.npz')
+        np.savez_compressed(
+            path,
+            upper_positions_m=np.asarray(upper_positions),
+            forearm_positions_m=np.asarray(forearm_positions),
+            upper_rotations_reported=np.asarray(upper_rotations),
+            forearm_rotations_reported=np.asarray(forearm_rotations),
+            target_upper_rotations=np.asarray(target_upper_rotations),
+            target_forearm_rotations=np.asarray(target_forearm_rotations),
+            labels=np.asarray(labels),
+        )
+        return path
+
+    @staticmethod
+    def _rotation_distance_deg(first, second):
+        return rotation_error_deg(first, second)
+
+    @classmethod
+    def _rotation_medoid(cls, rotations):
+        rotations = np.asarray(rotations)
+        distances = np.array([
+            [cls._rotation_distance_deg(first, second) for second in rotations]
+            for first in rotations
+        ])
+        index = int(np.argmin(np.sum(distances, axis=1)))
+        return rotations[index], distances[index], index
+
+    @classmethod
+    def _print_reference_repeatability(cls, upper_rotations,
+                                       forearm_rotations, labels):
+        print('\n  Reference repeatability check:')
+        passed = True
+        labels_array = np.asarray(labels)
+        for label in dict.fromkeys(labels):
+            selected_upper = np.asarray(upper_rotations)[labels_array == label]
+            selected_forearm = np.asarray(forearm_rotations)[labels_array == label]
+            passed = cls._print_pose_repeatability(
+                selected_upper, selected_forearm, label) and passed
+        return passed
+
+    @classmethod
+    def _print_pose_repeatability(cls, upper_rotations,
+                                  forearm_rotations, label):
+        print(f'\n  {label.upper()} repeatability check:')
+        passed = True
+        for receiver, rotations in (
+                ('upper', upper_rotations), ('forearm', forearm_rotations)):
+            _, deviations, medoid_index = cls._rotation_medoid(rotations)
+            maximum = float(np.max(deviations))
+            print(f'    {receiver:7s}: max={maximum:6.2f} deg '
+                  f'(representative repeat {medoid_index + 1})')
+            if maximum > REFERENCE_REPEAT_LIMIT_DEG:
+                failed_repeat = int(np.argmax(deviations)) + 1
+                print(f'      ERROR: repeat {failed_repeat} differs by '
+                      f'{maximum:.1f} deg; rebuild this pose with the same '
+                      'palm and thumb directions.')
+                passed = False
+        return passed
 
     def _static_quality(self, samples):
         p_u, R_u, p_f, R_f = self._arrays(samples)
@@ -375,12 +623,6 @@ class DualCalibrationNode(Node):
               f"angle={quality['upper_angle_rms_deg']:.2f} deg")
         print(f"    forearm: position={quality['forearm_position_rms_m']*1000:.2f} mm, "
               f"angle={quality['forearm_angle_rms_deg']:.2f} deg")
-
-    @staticmethod
-    def _print_pivot(label, result):
-        print(f'  {label.capitalize()} pivot: RMS={result.rms_m*1000:.2f} mm, '
-              f'condition={result.condition_number:.1f}, rank={result.rank}, '
-              f'inliers={result.inlier_count}/{result.sample_count}')
 
     @staticmethod
     def _save(calibration):

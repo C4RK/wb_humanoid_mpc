@@ -1,0 +1,93 @@
+calibration:
+  version: 7
+  mode: dual_receiver_hybrid
+  calibrated_at: '2026-10-11T22:30:20.811182+00:00'
+  reference_pose_labels:
+  - down
+  - forward
+  - sideways
+  - straight_down
+  rotation_convention: as_reported
+  rotation_convention_method: relative_reference_motion
+  forearm_axis_local:
+  - -0.09222557
+  - 0.99046293
+  - 0.10236033
+  upper_position_rotation_tx_to_body:
+  - - 0.27158347
+    - -0.05224972
+    - 0.96099552
+  - - 0.90767891
+    - 0.34584979
+    - -0.23771186
+  - - -0.31993972
+    - 0.93683397
+    - 0.14135306
+  upper_shoulder_center_tx_m:
+  - 0.21651936
+  - 0.02361771
+  - -0.08012136
+  upper_receiver_radius_m: 0.1597945
+  forearm_rotation_tx_to_body:
+  - - -0.20757329
+    - -0.05135168
+    - 0.97687068
+  - - 0.97801106
+    - -0.03150705
+    - 0.20615936
+  - - 0.02019168
+    - 0.99818351
+    - 0.05676253
+  forearm_sensor_mount_rotation:
+  - - -0.04055245
+    - 0.99791218
+    - 0.05026704
+  - - -0.77272893
+    - -0.06321571
+    - 0.63158038
+  - - 0.63343942
+    - -0.01323067
+    - 0.77367917
+  quality:
+    upper_position_rms_m: 0.00080743
+    forearm_position_rms_m: 0.00147217
+    upper_angle_rms_deg: 0.27144128
+    forearm_angle_rms_deg: 0.24326391
+    static_samples: 200.0
+    upper_assignment_excursion_deg: 12.1022
+    forearm_assignment_excursion_deg: 46.6811
+    as_reported_relative_rotation_rms_deg: 56.8964
+    transpose_relative_rotation_rms_deg: 118.1638
+    reference_max_error_deg: 13.1235
+    upper_position_direction_errors_deg:
+    - 9.3479
+    - 12.1889
+    - 7.5949
+    - 1.5705
+    - 2.5368
+    - 6.8196
+    - 3.295
+    - 2.7673
+    - 4.1059
+    - 8.1167
+    - 7.546
+    - 7.7239
+    forearm_direction_errors_deg:
+    - 3.5004
+    - 4.056
+    - 6.8046
+    - 8.1198
+    - 13.1235
+    - 12.5512
+    - 7.6227
+    - 10.8465
+    - 7.5585
+    - 11.5484
+    - 12.0582
+    - 11.9558
+    upper_position_model_rms_m: 0.02024273
+    upper_position_model_max_m: 0.03379176
+    forearm_twist_repeatability_errors_deg:
+    - 1.2202
+    - 3.1907
+    - 3.4609

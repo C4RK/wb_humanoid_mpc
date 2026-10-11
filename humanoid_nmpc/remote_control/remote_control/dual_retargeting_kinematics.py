@@ -1,10 +1,9 @@
 """Geometry for dual-receiver EM arm calibration and retargeting.
 
 The upper-arm and forearm receivers are treated as two rigid bodies measured
-in the transmitter frame.  Functional calibration identifies the shoulder and
-elbow joint centres without manual anthropometric measurements.  Retargeting
-uses orientations only, so the human link lengths are diagnostics rather than
-inputs to the robot inverse kinematics.
+in the transmitter frame.  The active calibration uses known reference poses
+to identify each segment direction without manual anthropometric measurements.
+Legacy functional-centre helpers remain available for older calibration files.
 """
 
 from dataclasses import dataclass
@@ -18,6 +17,7 @@ from remote_control.retargeting_kinematics import (
     UPPER_ARM_ZERO_AXIS,
     arm_frames,
     shoulder_pitch_roll,
+    shoulder_yaw,
     unwrap_near,
     wrist_roll,
 )
@@ -34,6 +34,121 @@ class PivotResult:
     rank: int
     inlier_count: int
     sample_count: int
+
+
+@dataclass(frozen=True)
+class OrientationCalibrationResult:
+    """Transmitter/body alignment and fixed receiver mounting rotation."""
+
+    rotation_tx_to_body: np.ndarray
+    sensor_mount_rotation: np.ndarray
+    errors_deg: np.ndarray
+
+
+@dataclass(frozen=True)
+class DirectionCalibrationResult:
+    """Body alignment and receiver-local longitudinal segment axes."""
+
+    rotation_tx_to_body: np.ndarray
+    upper_axis_local: np.ndarray
+    forearm_axis_local: np.ndarray
+    upper_errors_deg: np.ndarray
+    forearm_errors_deg: np.ndarray
+
+
+@dataclass(frozen=True)
+class SingleDirectionCalibrationResult:
+    """Alignment and one receiver-local segment axis."""
+
+    rotation_tx_to_body: np.ndarray
+    axis_local: np.ndarray
+    errors_deg: np.ndarray
+
+
+@dataclass(frozen=True)
+class PositionDirectionCalibrationResult:
+    """Upper-arm direction model obtained from receiver positions."""
+
+    rotation_tx_to_body: np.ndarray
+    shoulder_center_tx_m: np.ndarray
+    receiver_radius_m: float
+    direction_errors_deg: np.ndarray
+    position_errors_m: np.ndarray
+
+
+ROTATION_AS_REPORTED = 'as_reported'
+ROTATION_TRANSPOSE_REPORTED = 'transpose_reported'
+ROTATION_CONVENTIONS = (
+    ROTATION_AS_REPORTED,
+    ROTATION_TRANSPOSE_REPORTED,
+)
+
+
+def apply_rotation_convention(rotations: np.ndarray, convention: str) -> np.ndarray:
+    """Convert reported receiver rotations to receiver-local-to-TX rotations.
+
+    WEMT packet documentation specifies quaternion order but does not state
+    whether the quaternion maps receiver coordinates to transmitter
+    coordinates or the inverse.  A rigid pivot motion makes that ambiguity
+    observable.  This helper keeps calibration and online retargeting on the
+    convention selected from the multi-pose reference diagnostic.
+    """
+    rotations = np.asarray(rotations, dtype=float)
+    if rotations.shape[-2:] != (3, 3):
+        raise ValueError('rotations must end with shape (3, 3)')
+    if convention == ROTATION_AS_REPORTED:
+        return rotations
+    if convention == ROTATION_TRANSPOSE_REPORTED:
+        return np.swapaxes(rotations, -1, -2)
+    raise ValueError(
+        f'unknown rotation convention {convention!r}; expected one of '
+        f'{ROTATION_CONVENTIONS}')
+
+
+def relative_rotation_errors(rotations_tx: np.ndarray,
+                             target_rotations_body: np.ndarray,
+                             rotation_tx_to_body: np.ndarray) -> np.ndarray:
+    """Score a quaternion direction using known relative reference motions.
+
+    For ``T = A R M.T``, the unknown receiver mounting ``M`` cancels between
+    two poses: ``T_j T_i.T = A R_j R_i.T A.T``.  This makes the reported versus
+    transposed quaternion convention observable once ``A`` has independently
+    been obtained from the upper-receiver position fit.
+    """
+    rotations = np.asarray(rotations_tx, dtype=float)
+    targets = np.asarray(target_rotations_body, dtype=float)
+    alignment = np.asarray(rotation_tx_to_body, dtype=float)
+    if rotations.shape != targets.shape or rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+        raise ValueError('receiver and target rotations must both have shape (N, 3, 3)')
+    if alignment.shape != (3, 3):
+        raise ValueError('rotation_tx_to_body must have shape (3, 3)')
+
+    errors = []
+    for first in range(len(rotations)):
+        for second in range(first + 1, len(rotations)):
+            target_relative = targets[second] @ targets[first].T
+            target_angle_deg = rotation_error_deg(target_relative, np.eye(3))
+            if target_angle_deg < 5.0:
+                continue
+            measured_relative = (
+                alignment @ rotations[second] @ rotations[first].T @ alignment.T)
+            errors.append(rotation_error_deg(measured_relative, target_relative))
+    if not errors:
+        raise ValueError('reference poses do not contain a distinct relative rotation')
+    return np.asarray(errors)
+
+
+def diagnose_rotation_convention(upper_positions: np.ndarray,
+                                 reported_upper_rotations: np.ndarray):
+    """Fit the shoulder pivot under both possible quaternion directions."""
+    results = {
+        convention: solve_shoulder_pivot(
+            upper_positions,
+            apply_rotation_convention(reported_upper_rotations, convention))
+        for convention in ROTATION_CONVENTIONS
+    }
+    selected = min(results, key=lambda name: results[name].rms_m)
+    return selected, results
 
 
 def _validate_pose_arrays(positions: np.ndarray, rotations: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -181,6 +296,306 @@ def fit_body_alignment(measured_directions: np.ndarray,
     return rotation, errors_deg
 
 
+def rotation_vector(rotation: np.ndarray) -> np.ndarray:
+    """Return the shortest SO(3) rotation vector for a rotation matrix."""
+    rotation = np.asarray(rotation, dtype=float)
+    if rotation.shape != (3, 3):
+        raise ValueError('rotation must have shape (3, 3)')
+    angle = math.acos(float(np.clip((np.trace(rotation) - 1.0) / 2.0, -1.0, 1.0)))
+    if angle < 1e-8:
+        return np.zeros(3)
+    if math.pi - angle < 1e-5:
+        # The ordinary skew formula is singular at pi.  Extract a stable axis
+        # from the symmetric part and recover signs from the off-diagonals.
+        diagonal = np.maximum((np.diag(rotation) + 1.0) / 2.0, 0.0)
+        axis = np.sqrt(diagonal)
+        index = int(np.argmax(axis))
+        if axis[index] < 1e-8:
+            raise ValueError('cannot recover rotation axis')
+        for other in range(3):
+            if other != index:
+                axis[other] = ((rotation[index, other] + rotation[other, index]) /
+                               (4.0 * axis[index]))
+        axis /= np.linalg.norm(axis)
+        return angle * axis
+    skew = np.array([
+        rotation[2, 1] - rotation[1, 2],
+        rotation[0, 2] - rotation[2, 0],
+        rotation[1, 0] - rotation[0, 1],
+    ])
+    return angle * skew / (2.0 * math.sin(angle))
+
+
+def rotation_error_deg(actual: np.ndarray, wanted: np.ndarray) -> float:
+    """Geodesic orientation error between two rotation matrices."""
+    return math.degrees(float(np.linalg.norm(
+        rotation_vector(np.asarray(wanted).T @ np.asarray(actual)))))
+
+
+def fit_orientation_calibration(sensor_rotations_tx: np.ndarray,
+                                target_segment_rotations_body: np.ndarray
+                                ) -> OrientationCalibrationResult:
+    """Fit transmitter alignment and sensor mounting from known arm poses.
+
+    The model is ``R_segment_body = A R_sensor_tx M.T``.  Relative rotations
+    first identify ``A`` without knowing the sensor mounting ``M``.  A short
+    alternating refinement then minimizes full orientation disagreement over
+    all calibration poses.  This avoids estimating a translating anatomical
+    shoulder centre from skin-mounted sensors.
+    """
+    observed = np.asarray(sensor_rotations_tx, dtype=float)
+    targets = np.asarray(target_segment_rotations_body, dtype=float)
+    if observed.shape != targets.shape or observed.ndim != 3 or observed.shape[1:] != (3, 3):
+        raise ValueError('sensor and target rotations must both have shape (N, 3, 3)')
+    if len(observed) < 3:
+        raise ValueError('at least three known calibration poses are required')
+
+    observed_relative = []
+    target_relative = []
+    for first in range(len(observed)):
+        for second in range(first + 1, len(observed)):
+            observed_vector = rotation_vector(
+                observed[first] @ observed[second].T)
+            target_vector = rotation_vector(
+                targets[first] @ targets[second].T)
+            if (np.linalg.norm(observed_vector) > 0.05 and
+                    np.linalg.norm(target_vector) > 0.05):
+                observed_relative.append(observed_vector)
+                target_relative.append(target_vector)
+    if len(observed_relative) < 3:
+        raise ValueError('known poses do not contain enough distinct rotations')
+
+    cross_covariance = np.asarray(target_relative).T @ np.asarray(observed_relative)
+    U, _, Vt = np.linalg.svd(cross_covariance)
+    correction = np.eye(3)
+    correction[2, 2] = np.linalg.det(U @ Vt)
+    alignment = U @ correction @ Vt
+    mount = mean_rotation(np.array([
+        target.T @ alignment @ sensor
+        for sensor, target in zip(observed, targets)
+    ]))
+
+    for _ in range(20):
+        measured_axes = []
+        target_axes = []
+        for sensor, target in zip(observed, targets):
+            sensor_segment = sensor @ mount.T
+            measured_axes.extend(sensor_segment.T)
+            target_axes.extend(target.T)
+        alignment, _ = fit_body_alignment(
+            np.asarray(measured_axes), np.asarray(target_axes))
+        mount = mean_rotation(np.array([
+            target.T @ alignment @ sensor
+            for sensor, target in zip(observed, targets)
+        ]))
+
+    errors = np.array([
+        rotation_error_deg(alignment @ sensor @ mount.T, target)
+        for sensor, target in zip(observed, targets)
+    ])
+    return OrientationCalibrationResult(alignment, mount, errors)
+
+
+def fit_segment_direction_calibration(upper_rotations_tx: np.ndarray,
+                                      forearm_rotations_tx: np.ndarray,
+                                      target_upper_directions_body: np.ndarray,
+                                      target_forearm_directions_body: np.ndarray,
+                                      ) -> DirectionCalibrationResult:
+    """Fit body alignment and both longitudinal axes from known arm poses.
+
+    Unlike a full upper-arm orientation fit, this model does not assume that a
+    skin-mounted upper-arm receiver accurately observes humeral axial twist.
+    Shoulder axial rotation is later obtained from the plane formed by the two
+    measured segment directions.
+    """
+    upper_rotations = np.asarray(upper_rotations_tx, dtype=float)
+    forearm_rotations = np.asarray(forearm_rotations_tx, dtype=float)
+    upper_targets = np.asarray(target_upper_directions_body, dtype=float)
+    forearm_targets = np.asarray(target_forearm_directions_body, dtype=float)
+    if upper_rotations.shape != forearm_rotations.shape:
+        raise ValueError('upper and forearm rotations must have matching shapes')
+    if upper_rotations.ndim != 3 or upper_rotations.shape[1:] != (3, 3):
+        raise ValueError('receiver rotations must have shape (N, 3, 3)')
+    if upper_targets.shape != (len(upper_rotations), 3):
+        raise ValueError('upper target directions must have shape (N, 3)')
+    if forearm_targets.shape != (len(upper_rotations), 3):
+        raise ValueError('forearm target directions must have shape (N, 3)')
+    if len(upper_rotations) < 3:
+        raise ValueError('at least three paired known poses are required')
+    upper_targets = upper_targets / np.linalg.norm(upper_targets, axis=1, keepdims=True)
+    forearm_targets = forearm_targets / np.linalg.norm(
+        forearm_targets, axis=1, keepdims=True)
+
+    seeds = []
+    for sign in (-1.0, 1.0):
+        for axis_index in range(3):
+            axis = np.zeros(3)
+            axis[axis_index] = sign
+            seeds.append(axis)
+
+    best = None
+    for upper_seed in seeds:
+        for forearm_seed in seeds:
+            upper_axis = upper_seed.copy()
+            forearm_axis = forearm_seed.copy()
+            for _ in range(50):
+                measured_upper = np.einsum(
+                    'nij,j->ni', upper_rotations, upper_axis)
+                measured_forearm = np.einsum(
+                    'nij,j->ni', forearm_rotations, forearm_axis)
+                alignment, _ = fit_body_alignment(
+                    np.vstack([measured_upper, measured_forearm]),
+                    np.vstack([upper_targets, forearm_targets]))
+
+                upper_estimates = np.einsum(
+                    'nji,nj->ni', upper_rotations,
+                    (alignment.T @ upper_targets.T).T)
+                forearm_estimates = np.einsum(
+                    'nji,nj->ni', forearm_rotations,
+                    (alignment.T @ forearm_targets.T).T)
+                new_upper_axis = np.mean(upper_estimates, axis=0)
+                new_forearm_axis = np.mean(forearm_estimates, axis=0)
+                new_upper_axis /= np.linalg.norm(new_upper_axis)
+                new_forearm_axis /= np.linalg.norm(new_forearm_axis)
+                change = (np.linalg.norm(new_upper_axis - upper_axis) +
+                          np.linalg.norm(new_forearm_axis - forearm_axis))
+                upper_axis = new_upper_axis
+                forearm_axis = new_forearm_axis
+                if change < 1e-10:
+                    break
+
+            measured_upper = np.einsum(
+                'nij,j->ni', upper_rotations, upper_axis)
+            measured_forearm = np.einsum(
+                'nij,j->ni', forearm_rotations, forearm_axis)
+            alignment, errors = fit_body_alignment(
+                np.vstack([measured_upper, measured_forearm]),
+                np.vstack([upper_targets, forearm_targets]))
+            rms = float(np.sqrt(np.mean(np.square(errors))))
+            if best is None or rms < best[0]:
+                best = (rms, alignment, upper_axis, forearm_axis, errors)
+
+    _, alignment, upper_axis, forearm_axis, errors = best
+    sample_count = len(upper_rotations)
+    return DirectionCalibrationResult(
+        rotation_tx_to_body=alignment,
+        upper_axis_local=upper_axis,
+        forearm_axis_local=forearm_axis,
+        upper_errors_deg=errors[:sample_count],
+        forearm_errors_deg=errors[sample_count:],
+    )
+
+
+def fit_single_direction_calibration(rotations_tx: np.ndarray,
+                                     target_directions_body: np.ndarray,
+                                     ) -> SingleDirectionCalibrationResult:
+    """Fit a body alignment and receiver-local longitudinal axis."""
+    rotations = np.asarray(rotations_tx, dtype=float)
+    targets = np.asarray(target_directions_body, dtype=float)
+    if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+        raise ValueError('receiver rotations must have shape (N, 3, 3)')
+    if targets.shape != (len(rotations), 3):
+        raise ValueError('target directions must have shape (N, 3)')
+    if len(rotations) < 3:
+        raise ValueError('at least three known poses are required')
+    targets = targets / np.linalg.norm(targets, axis=1, keepdims=True)
+
+    seeds = []
+    for sign in (-1.0, 1.0):
+        for axis_index in range(3):
+            axis = np.zeros(3)
+            axis[axis_index] = sign
+            seeds.append(axis)
+
+    best = None
+    for seed in seeds:
+        axis = seed.copy()
+        for _ in range(50):
+            measured = np.einsum('nij,j->ni', rotations, axis)
+            alignment, _ = fit_body_alignment(measured, targets)
+            estimates = np.einsum(
+                'nji,nj->ni', rotations,
+                (alignment.T @ targets.T).T)
+            new_axis = np.mean(estimates, axis=0)
+            new_axis /= np.linalg.norm(new_axis)
+            change = np.linalg.norm(new_axis - axis)
+            axis = new_axis
+            if change < 1e-10:
+                break
+
+        measured = np.einsum('nij,j->ni', rotations, axis)
+        alignment, errors = fit_body_alignment(measured, targets)
+        rms = float(np.sqrt(np.mean(np.square(errors))))
+        if best is None or rms < best[0]:
+            best = (rms, alignment, axis, errors)
+
+    _, alignment, axis, errors = best
+    return SingleDirectionCalibrationResult(
+        rotation_tx_to_body=alignment,
+        axis_local=axis,
+        errors_deg=errors,
+    )
+
+
+def fit_position_direction_calibration(positions_tx: np.ndarray,
+                                       target_directions_body: np.ndarray,
+                                       ) -> PositionDirectionCalibrationResult:
+    """Fit ``p = centre + radius * R_body_to_tx * direction``.
+
+    The upper-arm receiver is treated as a point moving approximately on a
+    sphere around the shoulder.  This is deliberately independent of its
+    skin-mounted orientation.
+    """
+    positions = np.asarray(positions_tx, dtype=float)
+    targets = np.asarray(target_directions_body, dtype=float)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError('positions must have shape (N, 3)')
+    if targets.shape != positions.shape:
+        raise ValueError('target directions must have shape (N, 3)')
+    if len(positions) < 3:
+        raise ValueError('at least three known poses are required')
+    if not np.all(np.isfinite(positions)) or not np.all(np.isfinite(targets)):
+        raise ValueError('position calibration contains non-finite values')
+    targets = targets / np.linalg.norm(targets, axis=1, keepdims=True)
+
+    targets_centered = targets - np.mean(targets, axis=0)
+    positions_centered = positions - np.mean(positions, axis=0)
+    U, _, Vt = np.linalg.svd(targets_centered.T @ positions_centered)
+    rotation_tx_to_body = U @ Vt
+    if np.linalg.det(rotation_tx_to_body) < 0.0:
+        U[:, -1] *= -1.0
+        rotation_tx_to_body = U @ Vt
+
+    denominator = float(np.sum(targets_centered * targets_centered))
+    if denominator < 1e-9:
+        raise ValueError('reference position directions do not span space')
+    radius = float(np.sum(
+        (targets_centered @ rotation_tx_to_body) * positions_centered
+    ) / denominator)
+    if radius <= 0.0:
+        raise ValueError('fitted upper receiver radius is not positive')
+    centre = (
+        np.mean(positions, axis=0)
+        - radius * np.mean(targets, axis=0) @ rotation_tx_to_body)
+
+    predicted_positions = (
+        centre + radius * targets @ rotation_tx_to_body)
+    position_errors = np.linalg.norm(predicted_positions - positions, axis=1)
+    measured_directions = (
+        rotation_tx_to_body @ (positions - centre).T).T
+    measured_directions /= np.linalg.norm(
+        measured_directions, axis=1, keepdims=True)
+    cosines = np.sum(measured_directions * targets, axis=1)
+    direction_errors = np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0)))
+    return PositionDirectionCalibrationResult(
+        rotation_tx_to_body=rotation_tx_to_body,
+        shoulder_center_tx_m=centre,
+        receiver_radius_m=radius,
+        direction_errors_deg=direction_errors,
+        position_errors_m=position_errors,
+    )
+
+
 def extract_shoulder_angles(shoulder_rotation: np.ndarray,
                             yaw_reference: float = 0.0) -> Tuple[float, float, float]:
     """Decompose ``Ry(pitch) Rx(roll) Rz(yaw)`` using the upper-arm direction."""
@@ -230,6 +645,75 @@ def dual_joint_angles(upper_sensor_rotation_tx: np.ndarray,
         elbow,
         fallback=previous_wrist,
     )
+    return np.array([pitch, roll, yaw, elbow, wrist], dtype=float)
+
+
+def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
+                                     forearm_sensor_rotation_tx: np.ndarray,
+                                     rotation_tx_to_body: np.ndarray,
+                                     upper_axis_local: np.ndarray,
+                                     forearm_axis_local: np.ndarray,
+                                     forearm_sensor_mount: np.ndarray,
+                                     previous_yaw: float = 0.0,
+                                     previous_wrist: float = 0.0) -> np.ndarray:
+    """Map two segment directions and forearm twist to five arm angles."""
+    alignment = np.asarray(rotation_tx_to_body, dtype=float)
+    upper_aligned = alignment @ np.asarray(upper_sensor_rotation_tx, dtype=float)
+    forearm_aligned = alignment @ np.asarray(forearm_sensor_rotation_tx, dtype=float)
+    upper_direction = upper_aligned @ np.asarray(upper_axis_local, dtype=float)
+    forearm_direction = forearm_aligned @ np.asarray(forearm_axis_local, dtype=float)
+    return dual_joint_angles_from_segment_vectors(
+        upper_direction,
+        forearm_direction,
+        forearm_aligned,
+        forearm_sensor_mount,
+        previous_yaw=previous_yaw,
+        previous_wrist=previous_wrist,
+    )
+
+
+def dual_joint_angles_from_segment_vectors(
+        upper_direction_body: np.ndarray,
+        forearm_direction_body: np.ndarray,
+        forearm_sensor_rotation_body: np.ndarray,
+        forearm_sensor_mount: np.ndarray,
+        previous_yaw: float = 0.0,
+        previous_wrist: float = 0.0,
+        min_yaw_observability: float = 0.35) -> np.ndarray:
+    """Map body-frame segment directions and forearm attitude to joints."""
+    upper_direction = np.asarray(upper_direction_body, dtype=float).copy()
+    forearm_direction = np.asarray(forearm_direction_body, dtype=float).copy()
+    forearm_aligned = np.asarray(forearm_sensor_rotation_body, dtype=float)
+    if np.linalg.norm(upper_direction) < 1e-9:
+        raise ValueError('upper-arm direction is zero')
+    if np.linalg.norm(forearm_direction) < 1e-9:
+        raise ValueError('forearm direction is zero')
+    upper_direction /= np.linalg.norm(upper_direction)
+    forearm_direction /= np.linalg.norm(forearm_direction)
+
+    pitch, roll = shoulder_pitch_roll(upper_direction)
+    yaw, yaw_observable = shoulder_yaw(
+        upper_direction, forearm_direction, pitch, roll,
+        fallback=previous_yaw,
+        min_perpendicular=min_yaw_observability)
+    elbow = math.asin(float(np.clip(
+        np.dot(upper_direction, forearm_direction), -1.0, 1.0)))
+    if yaw_observable:
+        wrist = wrist_roll(
+            forearm_aligned,
+            forearm_sensor_mount,
+            pitch,
+            roll,
+            yaw,
+            elbow,
+            fallback=previous_wrist,
+        )
+    else:
+        # With collinear upper-arm and forearm directions, shoulder axial
+        # rotation and forearm twist cannot be separated.  Holding both last
+        # observable values avoids assigning the same physical rotation to an
+        # arbitrary combination of yaw and wrist.
+        wrist = previous_wrist
     return np.array([pitch, roll, yaw, elbow, wrist], dtype=float)
 
 

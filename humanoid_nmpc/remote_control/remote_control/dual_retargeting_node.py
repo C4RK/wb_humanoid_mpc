@@ -13,7 +13,13 @@ from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
 from remote_control.dual_calibration_node import load_dual_calibration
-from remote_control.dual_retargeting_kinematics import dual_joint_angles
+from remote_control.dual_retargeting_kinematics import (
+    ROTATION_AS_REPORTED,
+    apply_rotation_convention,
+    dual_joint_angles,
+    dual_joint_angles_from_directions,
+    dual_joint_angles_from_segment_vectors,
+)
 from remote_control.retargeting_kinematics import quaternion_to_matrix
 from remote_control.retargeting_node import (
     DEFAULT_JOINT_STATE,
@@ -49,30 +55,67 @@ class DualRetargetingNode(Node):
         super().__init__('dual_retargeting_node')
         calibration = load_dual_calibration()
 
-        self.R_align = self._matrix(calibration, 'rotation_tx_to_body')
-        self.upper_mount = self._matrix(calibration, 'upper_sensor_mount_rotation')
-        self.forearm_mount = self._matrix(calibration, 'forearm_sensor_mount_rotation')
-        self.shoulder_center = self._vector(calibration, 'shoulder_center_tx_m')
-        self.upper_to_shoulder = self._vector(calibration, 'upper_sensor_to_shoulder_m')
-        self.upper_to_elbow = self._vector(calibration, 'upper_sensor_to_elbow_m')
-        self.forearm_to_elbow = self._vector(calibration, 'forearm_sensor_to_elbow_m')
+        self.calibration_mode = calibration['mode']
+        self.forearm_mount = self._matrix(
+            calibration, 'forearm_sensor_mount_rotation')
+        self.use_hybrid = self.calibration_mode == 'dual_receiver_hybrid'
+        if self.use_hybrid:
+            self.upper_position_align = self._matrix(
+                calibration, 'upper_position_rotation_tx_to_body')
+            self.upper_shoulder_center = self._vector(
+                calibration, 'upper_shoulder_center_tx_m')
+            self.upper_receiver_radius = float(
+                calibration['upper_receiver_radius_m'])
+            if not 0.08 <= self.upper_receiver_radius <= 0.35:
+                raise ValueError('Invalid upper receiver radius')
+            self.forearm_align = self._matrix(
+                calibration, 'forearm_rotation_tx_to_body')
+            self.forearm_axis_local = self._vector(
+                calibration, 'forearm_axis_local')
+        else:
+            self.R_align = self._matrix(calibration, 'rotation_tx_to_body')
+            self.upper_mount = self._matrix(
+                calibration, 'upper_sensor_mount_rotation')
+        self.use_segment_directions = (
+            self.calibration_mode == 'dual_receiver_direction')
+        if self.use_segment_directions:
+            self.upper_axis_local = self._vector(calibration, 'upper_axis_local')
+            self.forearm_axis_local = self._vector(calibration, 'forearm_axis_local')
+        self.use_functional_centres = (
+            self.calibration_mode == 'dual_receiver_functional')
+        if self.use_functional_centres:
+            self.shoulder_center = self._vector(calibration, 'shoulder_center_tx_m')
+            self.upper_to_shoulder = self._vector(calibration, 'upper_sensor_to_shoulder_m')
+            self.upper_to_elbow = self._vector(calibration, 'upper_sensor_to_elbow_m')
+            self.forearm_to_elbow = self._vector(calibration, 'forearm_sensor_to_elbow_m')
+        self.rotation_convention = calibration.get(
+            'rotation_convention', ROTATION_AS_REPORTED)
 
         self.declare_parameter('filter_time_constant_s', 0.06)
         self.declare_parameter('max_joint_speed_rad_s', 2.5)
         self.declare_parameter('max_shoulder_drift_m', 0.05)
         self.declare_parameter('max_elbow_mismatch_m', 0.05)
+        self.declare_parameter('max_upper_radius_error_m', 0.05)
         self.declare_parameter('watchdog_timeout_s', 0.25)
+        self.declare_parameter('min_yaw_observability', 0.35)
+        self.declare_parameter('publish_joint_targets', False)
         self.filter_tau = max(0.0, float(self.get_parameter('filter_time_constant_s').value))
         self.max_speed = max(0.1, float(self.get_parameter('max_joint_speed_rad_s').value))
         self.max_shoulder_drift = max(0.0, float(self.get_parameter('max_shoulder_drift_m').value))
         self.max_elbow_mismatch = max(0.0, float(self.get_parameter('max_elbow_mismatch_m').value))
+        self.max_upper_radius_error = max(
+            0.01, float(self.get_parameter('max_upper_radius_error_m').value))
         self.watchdog_timeout = max(0.05, float(self.get_parameter('watchdog_timeout_s').value))
+        self.min_yaw_observability = float(np.clip(
+            self.get_parameter('min_yaw_observability').value, 0.05, 0.95))
+        self.publish_joint_targets = bool(
+            self.get_parameter('publish_joint_targets').value)
 
         quality = calibration.get('quality', {})
         self.get_logger().info(
             'Loaded dual calibration: '
-            f"upper={calibration['upper_arm_length_m']*100:.1f} cm, "
-            f"elbow fit={quality.get('elbow_pivot_rms_m', float('nan'))*1000:.1f} mm, "
+            f'mode={self.calibration_mode}, '
+            f'rotation={self.rotation_convention}, '
             f"reference max={quality.get('reference_max_error_deg', float('nan')):.1f} deg")
 
         self._pending_upper = {}
@@ -90,7 +133,9 @@ class DualRetargetingNode(Node):
         self._publisher = self.create_publisher(JointState, '/arm_joint_target', 10)
         self._watchdog_timer = self.create_timer(0.1, self._watchdog)
         self.get_logger().info(
-            'Dual retargeting ready. Hold the calibration reference pose before starting MPC.')
+            'Dual retargeting ready. Hold the calibration reference pose before '
+            'starting MPC. Joint-target publishing is '
+            f'{"ENABLED" if self.publish_joint_targets else "DISABLED (dry run)"}.')
 
     @staticmethod
     def _vector(calibration, key):
@@ -141,29 +186,70 @@ class DualRetargetingNode(Node):
             return
         p_u, R_u = _message_pose(upper_msg)
         p_f, R_f = _message_pose(forearm_msg)
+        R_u = apply_rotation_convention(R_u, self.rotation_convention)
+        R_f = apply_rotation_convention(R_f, self.rotation_convention)
 
-        shoulder_now = p_u + R_u @ self.upper_to_shoulder
-        elbow_from_upper = p_u + R_u @ self.upper_to_elbow
-        elbow_from_forearm = p_f + R_f @ self.forearm_to_elbow
-        shoulder_drift = float(np.linalg.norm(shoulder_now - self.shoulder_center))
-        elbow_mismatch = float(np.linalg.norm(elbow_from_upper - elbow_from_forearm))
-        if shoulder_drift > self.max_shoulder_drift:
-            self.get_logger().warn(
-                f'Shoulder consistency error {shoulder_drift*100:.1f} cm; '
-                'transmitter/upper receiver may have shifted. Frame dropped.',
-                throttle_duration_sec=1.0)
-            return
-        if elbow_mismatch > self.max_elbow_mismatch:
-            self.get_logger().warn(
-                f'Elbow consistency error {elbow_mismatch*100:.1f} cm; '
-                'a receiver may have shifted. Frame dropped.',
-                throttle_duration_sec=1.0)
-            return
+        shoulder_drift = None
+        elbow_mismatch = None
+        upper_radius_error = None
+        if self.use_functional_centres:
+            shoulder_now = p_u + R_u @ self.upper_to_shoulder
+            elbow_from_upper = p_u + R_u @ self.upper_to_elbow
+            elbow_from_forearm = p_f + R_f @ self.forearm_to_elbow
+            shoulder_drift = float(np.linalg.norm(shoulder_now - self.shoulder_center))
+            elbow_mismatch = float(np.linalg.norm(elbow_from_upper - elbow_from_forearm))
+            if shoulder_drift > self.max_shoulder_drift:
+                self.get_logger().warn(
+                    f'Shoulder consistency error {shoulder_drift*100:.1f} cm; '
+                    'transmitter/upper receiver may have shifted. Frame dropped.',
+                    throttle_duration_sec=1.0)
+                return
+            if elbow_mismatch > self.max_elbow_mismatch:
+                self.get_logger().warn(
+                    f'Elbow consistency error {elbow_mismatch*100:.1f} cm; '
+                    'a receiver may have shifted. Frame dropped.',
+                    throttle_duration_sec=1.0)
+                return
 
-        raw = dual_joint_angles(
-            R_u, R_f, self.R_align, self.upper_mount, self.forearm_mount,
-            previous_yaw=float(self._raw_angles[2]),
-            previous_wrist=float(self._raw_angles[4]))
+        if self.use_hybrid:
+            upper_offset = p_u - self.upper_shoulder_center
+            upper_radius = float(np.linalg.norm(upper_offset))
+            if upper_radius < 1e-6:
+                self.get_logger().warn(
+                    'Upper receiver is at the fitted shoulder centre; frame dropped.',
+                    throttle_duration_sec=1.0)
+                return
+            upper_radius_error = abs(
+                upper_radius - self.upper_receiver_radius)
+            if upper_radius_error > self.max_upper_radius_error:
+                self.get_logger().warn(
+                    f'Upper position radius error {upper_radius_error*1000:.0f} mm; '
+                    'transmitter or upper receiver may have shifted. Frame dropped.',
+                    throttle_duration_sec=1.0)
+                return
+            upper_direction = self.upper_position_align @ upper_offset
+            forearm_aligned = self.forearm_align @ R_f
+            forearm_direction = forearm_aligned @ self.forearm_axis_local
+            raw = dual_joint_angles_from_segment_vectors(
+                upper_direction,
+                forearm_direction,
+                forearm_aligned,
+                self.forearm_mount,
+                previous_yaw=float(self._raw_angles[2]),
+                previous_wrist=float(self._raw_angles[4]),
+                min_yaw_observability=self.min_yaw_observability)
+        elif self.use_segment_directions:
+            raw = dual_joint_angles_from_directions(
+                R_u, R_f, self.R_align,
+                self.upper_axis_local, self.forearm_axis_local,
+                self.forearm_mount,
+                previous_yaw=float(self._raw_angles[2]),
+                previous_wrist=float(self._raw_angles[4]))
+        else:
+            raw = dual_joint_angles(
+                R_u, R_f, self.R_align, self.upper_mount, self.forearm_mount,
+                previous_yaw=float(self._raw_angles[2]),
+                previous_wrist=float(self._raw_angles[4]))
         self._raw_angles = raw
 
         bounded = np.array([
@@ -196,24 +282,33 @@ class DualRetargetingNode(Node):
         output = JointState()
         output.header.stamp = upper_msg.header.stamp
         output.position = list(self._joint_state)
-        self._publisher.publish(output)
+        if self.publish_joint_targets:
+            self._publisher.publish(output)
         self._last_pair_wall = time.monotonic()
 
         degrees = np.degrees(commanded)
-        self.get_logger().info(
+        message = (
             f'pitch={degrees[0]:+.1f} roll={degrees[1]:+.1f} '
-            f'yaw={degrees[2]:+.1f} elbow={degrees[3]:+.1f} wrist={degrees[4]:+.1f} deg; '
-            f'joint-centre errors: shoulder={shoulder_drift*1000:.0f} mm, '
-            f'elbow={elbow_mismatch*1000:.0f} mm',
-            throttle_duration_sec=1.0)
+            f'yaw={degrees[2]:+.1f} elbow={degrees[3]:+.1f} '
+            f'wrist={degrees[4]:+.1f} deg')
+        if self.use_functional_centres:
+            message += (
+                f'; joint-centre errors: shoulder={shoulder_drift*1000:.0f} mm, '
+                f'elbow={elbow_mismatch*1000:.0f} mm')
+        if self.use_hybrid:
+            message += f'; upper radius error={upper_radius_error*1000:.0f} mm'
+        self.get_logger().info(message, throttle_duration_sec=1.0)
 
     def _watchdog(self):
         if self._last_pair_wall is None:
             return
         age = time.monotonic() - self._last_pair_wall
         if age > self.watchdog_timeout:
+            action = ('no new arm target is being published'
+                      if self.publish_joint_targets else
+                      'dry-run output is no longer updating')
             self.get_logger().warn(
-                f'No valid receiver pair for {age:.2f} s; no new arm target is being published.',
+                f'No valid receiver pair for {age:.2f} s; {action}.',
                 throttle_duration_sec=1.0)
 
 
