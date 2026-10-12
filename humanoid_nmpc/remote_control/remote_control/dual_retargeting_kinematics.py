@@ -344,10 +344,17 @@ def estimate_local_rotation_axis(
         max_samples: int = 80) -> LocalRotationAxisResult:
     """Estimate a fixed receiver-local axis from an isolated twist motion.
 
-    For a receiver rigidly attached to the forearm, pronation/supination has
-    ``R_j = R_i M.T Rx(delta) M``.  Consequently every relative rotation
-    ``R_i.T R_j`` has the same axis in receiver-local coordinates.  Axis signs
-    are irrelevant, so a weighted principal-component fit is used.
+    During pronation/supination, the anatomical forearm axis is invariant:
+    there is a receiver-local vector ``a`` for which ``R_i a`` is constant in
+    the transmitter frame.  The dominant right singular vector of the mean
+    rotation estimates ``a`` directly.  This invariant-vector formulation is
+    less sensitive than fitting the axes of every long-range sample pair:
+    small elbow corrections do not get amplified by pairs spanning opposite
+    ends of the motion.
+
+    Pairwise rotations are still used to measure the total motion range.  A
+    robust iteration rejects isolated orientation glitches before reporting
+    the invariant-axis residual.
     """
     rotations = np.asarray(rotations, dtype=float)
     if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
@@ -360,9 +367,8 @@ def estimate_local_rotation_axis(
     sample_count = min(len(rotations), max_samples)
     indices = np.unique(np.linspace(
         0, len(rotations) - 1, sample_count, dtype=int))
-    unit_axes = []
-    weights = []
     motion_range = 0.0
+    usable_pair_count = 0
     min_angle = math.radians(min_pair_angle_deg)
     max_angle = math.radians(max_pair_angle_deg)
     for first_offset, first in enumerate(indices[:-1]):
@@ -372,44 +378,59 @@ def estimate_local_rotation_axis(
             angle = float(np.linalg.norm(vector))
             motion_range = max(motion_range, angle)
             if min_angle <= angle <= max_angle:
-                unit_axes.append(vector / angle)
-                weights.append(angle * angle)
-    if len(unit_axes) < 20:
+                usable_pair_count += 1
+    if usable_pair_count < 20:
         raise ValueError(
             'isolated twist motion did not contain enough rotation; '
             'rotate the palm farther in both directions')
 
-    unit_axes = np.asarray(unit_axes)
-    weights = np.asarray(weights)
-    # Refit after rejecting axes inconsistent with the dominant motion.  This
-    # suppresses pairs that mainly contain a small elbow/shoulder correction or
-    # an isolated orientation glitch rather than forearm twist.
-    inliers = np.ones(len(unit_axes), dtype=bool)
-    for _ in range(4):
-        covariance = np.einsum(
-            'n,ni,nj->ij', weights[inliers],
-            unit_axes[inliers], unit_axes[inliers])
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
-        axis = eigenvectors[:, int(np.argmax(eigenvalues))]
+    inliers = np.ones(len(rotations), dtype=bool)
+    for _ in range(6):
+        _, singular_values, right_vectors = np.linalg.svd(
+            np.mean(rotations[inliers], axis=0))
+        axis = right_vectors[0]
+        directions = np.einsum('nij,j->ni', rotations, axis)
+        mean_direction = np.mean(directions[inliers], axis=0)
+        mean_norm = float(np.linalg.norm(mean_direction))
+        if mean_norm < 1e-9:
+            raise ValueError('cannot identify a stable forearm rotation axis')
+        mean_direction /= mean_norm
         residuals = np.degrees(np.arccos(np.clip(
-            np.abs(unit_axes @ axis), -1.0, 1.0)))
+            directions @ mean_direction, -1.0, 1.0)))
         selected = residuals[inliers]
         median = float(np.median(selected))
         mad = float(np.median(np.abs(selected - median)))
         threshold = max(8.0, median + 3.0 * 1.4826 * mad)
         new_inliers = residuals <= threshold
-        if np.count_nonzero(new_inliers) < 20:
+        if np.count_nonzero(new_inliers) < max(20, int(0.6 * len(rotations))):
             break
         if np.array_equal(new_inliers, inliers):
             break
         inliers = new_inliers
+
+    # Recompute once with the final inlier set so the returned axis and errors
+    # correspond to the same samples.
+    _, singular_values, right_vectors = np.linalg.svd(
+        np.mean(rotations[inliers], axis=0))
+    axis = right_vectors[0]
+    directions = np.einsum('nij,j->ni', rotations, axis)
+    mean_direction = np.mean(directions[inliers], axis=0)
+    mean_direction /= np.linalg.norm(mean_direction)
+    residuals = np.degrees(np.arccos(np.clip(
+        directions @ mean_direction, -1.0, 1.0)))
+
+    # With little axial motion all three singular values remain close to one,
+    # making the dominant vector arbitrary.  The pairwise range check above is
+    # the primary guard; this gap check catches a dispersed non-axial motion.
+    if singular_values[0] - singular_values[1] < 1e-4:
+        raise ValueError('motion does not reveal a unique forearm rotation axis')
+
     # Give the otherwise sign-ambiguous result a deterministic representation.
     largest_component = int(np.argmax(np.abs(axis)))
     if axis[largest_component] < 0.0:
         axis = -axis
 
-    rms = float(np.sqrt(np.average(
-        np.square(residuals[inliers]), weights=weights[inliers])))
+    rms = float(np.sqrt(np.mean(np.square(residuals[inliers]))))
     maximum = float(np.max(residuals[inliers]))
     return LocalRotationAxisResult(
         axis_local=axis,

@@ -56,6 +56,26 @@ class DualRetargetingKinematicsTest(unittest.TestCase):
         self.assertLess(result.rms_error_deg, 1e-5)
         self.assertGreater(result.motion_range_deg, 140.0)
 
+    def test_isolated_twist_axis_rejects_one_glitch_and_small_swing(self):
+        alignment = rotation_z(0.37) @ rotation_y(-0.22)
+        mount = rotation_y(0.31) @ rotation_z(-0.48)
+        forearm_frame = rotation_z(0.26) @ rotation_y(-0.19)
+        wrist_angles = np.linspace(-1.0, 1.0, 160)
+        rotations = np.array([
+            alignment.T @ rotation_z(0.03 * math.sin(3.0 * angle)) @
+            forearm_frame @ rotation_x(angle) @ mount
+            for angle in wrist_angles
+        ])
+        rotations[80] = rotation_z(2.1) @ rotation_y(-1.0)
+
+        result = estimate_local_rotation_axis(rotations)
+        expected = mount.T @ FOREARM_ZERO_AXIS
+
+        self.assertGreater(abs(float(np.dot(result.axis_local, expected))), 0.999)
+        self.assertLess(result.rms_error_deg, 2.0)
+        self.assertLess(result.max_error_deg, 4.0)
+        self.assertLess(result.pair_count, len(rotations))
+
     def test_known_twist_axis_rejects_wrist_rotation_from_direction_fit(self):
         alignment = rotation_z(-0.38) @ rotation_x(0.21)
         mount = rotation_y(0.29) @ rotation_z(-0.17)

@@ -56,6 +56,8 @@ class DualRetargetingNode(Node):
         calibration = load_dual_calibration()
 
         self.calibration_mode = calibration['mode']
+        self.calibration_dry_run_only = bool(
+            calibration.get('dry_run_only', False))
         self.forearm_mount = self._matrix(
             calibration, 'forearm_sensor_mount_rotation')
         self.use_hybrid = self.calibration_mode == 'dual_receiver_hybrid'
@@ -115,13 +117,19 @@ class DualRetargetingNode(Node):
             self.get_parameter('min_yaw_observability').value, 0.05, 0.95))
         self.publish_joint_targets = bool(
             self.get_parameter('publish_joint_targets').value)
+        if self.calibration_dry_run_only and self.publish_joint_targets:
+            raise ValueError(
+                'This calibration is marked dry-run-only because its forearm '
+                'reference error exceeded 15 degrees. Recalibrate before '
+                'publishing robot joint targets.')
 
         quality = calibration.get('quality', {})
         self.get_logger().info(
             'Loaded dual calibration: '
             f'mode={self.calibration_mode}, '
             f'rotation={self.rotation_convention}, '
-            f"reference max={quality.get('reference_max_error_deg', float('nan')):.1f} deg")
+            f"reference max={quality.get('reference_max_error_deg', float('nan')):.1f} deg, "
+            f'dry_run_only={self.calibration_dry_run_only}')
 
         self._pending_upper = {}
         self._pending_forearm = {}

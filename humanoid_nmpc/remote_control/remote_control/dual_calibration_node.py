@@ -47,6 +47,9 @@ REFERENCE_REPEATS = 3
 ASSIGNMENT_CHECK_SECONDS = 6.0
 TWIST_AXIS_SECONDS = 8.0
 REFERENCE_REPEAT_LIMIT_DEG = 15.0
+UPPER_REFERENCE_HARD_LIMIT_DEG = 15.0
+FOREARM_REFERENCE_HARD_LIMIT_DEG = 25.0
+TWIST_REFERENCE_HARD_LIMIT_DEG = 15.0
 HARD_PIVOT_RMS_LIMIT_M = 0.04
 MIN_UPPER_ARM_LENGTH_M = 0.15
 MAX_UPPER_ARM_LENGTH_M = 0.45
@@ -97,7 +100,24 @@ def load_dual_calibration(path: str = DUAL_CALIBRATION_FILE) -> dict:
     quality = calibration.get('quality', {})
     failures = []
     reference_error = float(quality.get('reference_max_error_deg', float('inf')))
-    if not math.isfinite(reference_error) or reference_error > 15.0:
+    isolated_axis_hybrid = (
+        mode == 'dual_receiver_hybrid' and
+        calibration.get('forearm_axis_method') == 'isolated_pronation_supination')
+    if isolated_axis_hybrid:
+        upper_errors = quality.get('upper_position_direction_errors_deg', [])
+        forearm_errors = quality.get('forearm_direction_errors_deg', [])
+        twist_errors = quality.get('forearm_twist_repeatability_errors_deg', [])
+        upper_max = max(map(float, upper_errors), default=reference_error)
+        forearm_max = max(map(float, forearm_errors), default=reference_error)
+        twist_max = max(map(float, twist_errors), default=reference_error)
+        if not math.isfinite(upper_max) or upper_max > UPPER_REFERENCE_HARD_LIMIT_DEG:
+            failures.append('upper-arm reference error exceeds 15 degrees')
+        if (not math.isfinite(forearm_max) or
+                forearm_max > FOREARM_REFERENCE_HARD_LIMIT_DEG):
+            failures.append('forearm reference error exceeds 25 degrees')
+        if not math.isfinite(twist_max) or twist_max > TWIST_REFERENCE_HARD_LIMIT_DEG:
+            failures.append('forearm twist reference error exceeds 15 degrees')
+    elif not math.isfinite(reference_error) or reference_error > 15.0:
         failures.append('reference-pose error exceeds 15 degrees')
     if mode == 'dual_receiver_functional':
         shoulder_rms = float(quality.get('shoulder_pivot_rms_m', float('inf')))
@@ -253,14 +273,16 @@ class DualCalibrationNode(Node):
             return
 
         # --------------------------------------------------------------
-        while True:
+        twist_attempt_limit = 3
+        for twist_attempt in range(1, twist_attempt_limit + 1):
             print('\n' + '=' * 68)
             print('STEP 2: Forearm rotation-axis calibration')
             print(f'For {TWIST_AXIS_SECONDS:.0f} seconds, keep the LEFT upper arm vertical,')
             print('the elbow bent 90 degrees and the forearm pointing forward.')
-            print('Keep the shoulder, elbow and wrist position fixed. Slowly turn')
-            print('the whole forearm palm-down, palm-up, and back several times.')
-            print('Do not bend the wrist or move the elbow.')
+            print('Keep the shoulder, elbow and wrist position fixed. Start with the')
+            print('thumb up, then slowly rotate about 45 degrees palm-down and about')
+            print('45 degrees palm-up. Return to thumb-up and repeat twice.')
+            print('Do not force the full rotation range, bend the wrist, or move the elbow.')
             print('=' * 68)
             input('Press ENTER, then begin the forearm-only rotation...')
             twist_samples = self._collect_samples(TWIST_AXIS_SECONDS)
@@ -284,16 +306,31 @@ class DualCalibrationNode(Node):
                       f'max={twist_axis_preview.max_error_deg:.2f} deg, '
                       f'range={twist_axis_preview.motion_range_deg:.1f} deg')
             if (twist_upper_excursion <= 15.0 and
-                    twist_forearm_excursion >= 40.0 and
                     twist_axis_preview is not None and
-                    twist_axis_preview.motion_range_deg >= 60.0 and
+                    twist_axis_preview.motion_range_deg >= 55.0 and
                     twist_axis_preview.rms_error_deg <= 15.0):
                 if twist_axis_preview.rms_error_deg > 8.0:
                     print('[WARNING] Twist-axis motion is usable but marginal; '
                           'keep the elbow steadier when practical.')
                 break
-            print('[RETRY] Keep the upper arm and elbow fixed, and rotate only')
-            print('the forearm through a wider palm-down/palm-up range.')
+            if twist_attempt == twist_attempt_limit:
+                print('[ERROR] Forearm rotation axis was not stable after three attempts.')
+                print('[Dual calibration] Stopped without saving. Do not repeat the')
+                print('motion again with this attachment. Refix the forearm receiver')
+                print('5-8 cm above the wrist, with its local Y axis parallel to the')
+                print('elbow-to-wrist direction, then restart calibration.')
+                return
+            if (twist_axis_preview is not None and
+                    twist_axis_preview.motion_range_deg > 140.0):
+                print('[RETRY] The motion was too large. Do not turn to the anatomical')
+                print('end stops. Use only about 45 degrees to each side of thumb-up.')
+            elif (twist_axis_preview is None or
+                  twist_axis_preview.motion_range_deg < 55.0):
+                print('[RETRY] Rotate slightly farther, but keep the total motion')
+                print('controlled and keep the elbow and wrist positions fixed.')
+            else:
+                print('[RETRY] Use a smaller, slower rotation about the forearm itself;')
+                print('keep the thumb, hand and receiver moving together as one unit.')
 
         # Three poses span independent upper-arm directions.  A fourth,
         # STRAIGHT_DOWN, overdetermines the forearm-direction fit and checks it
@@ -483,10 +520,14 @@ class DualCalibrationNode(Node):
               f'{position_fit.receiver_radius_m*100:.1f} cm, '
               f'RMS={position_rms_m*1000:.1f} mm, '
               f'max={position_max_m*1000:.1f} mm')
+        upper_reference_max = float(np.max(upper_reference_errors))
+        forearm_reference_max = float(np.max(forearm_reference_errors))
+        forearm_twist_reference_max = float(np.max(
+            forearm_twist_reference_errors))
         max_reference_error = float(max(
-            np.max(upper_reference_errors), np.max(forearm_reference_errors),
-            np.max(forearm_twist_reference_errors)))
-        if (twist_axis_result.motion_range_deg < 60.0 or
+            upper_reference_max, forearm_reference_max,
+            forearm_twist_reference_max))
+        if (twist_axis_result.motion_range_deg < 55.0 or
                 twist_axis_result.rms_error_deg > 15.0):
             print('[ERROR] Forearm rotation-axis calibration is unreliable.')
             print('[Dual calibration] Stopped without saving. Repeat STEP 2')
@@ -506,21 +547,37 @@ class DualCalibrationNode(Node):
         if position_quality_warning:
             print('[WARNING] Upper receiver position model is marginal '
                   '(recommended RMS <= 30 mm and max <= 50 mm).')
-        if max_reference_error > 15.0:
-            print('[ERROR] Reference-pose error exceeds 15 degrees.')
+        if upper_reference_max > UPPER_REFERENCE_HARD_LIMIT_DEG:
+            print('[ERROR] Upper-arm reference error exceeds 15 degrees.')
             print('[Dual calibration] Stopped without saving. Repeat the reference poses.')
             return
+        if forearm_reference_max > FOREARM_REFERENCE_HARD_LIMIT_DEG:
+            print('[ERROR] Forearm reference error exceeds 25 degrees.')
+            print('[Dual calibration] Stopped without saving. Check the forearm')
+            print('attachment and repeat the reference poses.')
+            return
+        if forearm_twist_reference_max > TWIST_REFERENCE_HARD_LIMIT_DEG:
+            print('[ERROR] Forearm twist reference error exceeds 15 degrees.')
+            print('[Dual calibration] Stopped without saving. Repeat the DOWN pose')
+            print('with the same palm and thumb direction.')
+            return
         reference_quality_warning = max_reference_error > 10.0
+        dry_run_only = forearm_reference_max > 15.0
         if reference_quality_warning:
             print('[WARNING] Reference-pose error exceeds 10 degrees.')
+            if forearm_reference_max > 15.0:
+                print('[WARNING] The isolated anatomical rotation axis differs from')
+                print('the idealized forearm direction. This calibration will be')
+                print('saved as dry-run-only and cannot publish commands to hardware.')
         if position_quality_warning or reference_quality_warning:
             if input('Save calibration with these warnings? [y/N]: ').strip().lower() != 'y':
                 print('[Dual calibration] Cancelled. Repeat the reference poses.')
                 return
 
         calibration = {
-            'version': 8,
+            'version': 9,
             'mode': 'dual_receiver_hybrid',
+            'dry_run_only': dry_run_only,
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
             'reference_pose_labels': list(reference_labels),
             'rotation_convention': rotation_convention,
@@ -555,6 +612,12 @@ class DualCalibrationNode(Node):
                 'transpose_relative_rotation_rms_deg': round(
                     convention_fits[ROTATION_TRANSPOSE_REPORTED][2], 4),
                 'reference_max_error_deg': round(max_reference_error, 4),
+                'upper_reference_max_error_deg': round(
+                    upper_reference_max, 4),
+                'forearm_reference_max_error_deg': round(
+                    forearm_reference_max, 4),
+                'forearm_twist_max_error_deg': round(
+                    forearm_twist_reference_max, 4),
                 'upper_position_direction_errors_deg': [
                     round(float(value), 4) for value in upper_reference_errors],
                 'forearm_direction_errors_deg': [
