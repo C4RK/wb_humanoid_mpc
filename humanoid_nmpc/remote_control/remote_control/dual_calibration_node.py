@@ -21,8 +21,9 @@ from remote_control.dual_retargeting_kinematics import (
     ROTATION_CONVENTIONS,
     ROTATION_TRANSPOSE_REPORTED,
     apply_rotation_convention,
+    estimate_local_rotation_axis,
     fit_position_direction_calibration,
-    fit_single_direction_calibration,
+    fit_single_direction_with_known_axis,
     mean_rotation,
     relative_rotation_errors,
     rotation_error_deg,
@@ -44,7 +45,8 @@ STATIC_SECONDS = 4.0
 REFERENCE_SECONDS = 2.0
 REFERENCE_REPEATS = 3
 ASSIGNMENT_CHECK_SECONDS = 6.0
-REFERENCE_REPEAT_LIMIT_DEG = 20.0
+TWIST_AXIS_SECONDS = 8.0
+REFERENCE_REPEAT_LIMIT_DEG = 15.0
 HARD_PIVOT_RMS_LIMIT_M = 0.04
 MIN_UPPER_ARM_LENGTH_M = 0.15
 MAX_UPPER_ARM_LENGTH_M = 0.45
@@ -250,9 +252,52 @@ class DualCalibrationNode(Node):
             print('[Dual calibration] Stopped without saving.')
             return
 
-        # Three poses span independent upper-arm directions.  STRAIGHT_DOWN
-        # adds an easy forearm-direction constraint so the direction fit is
-        # overdetermined and checked near full elbow extension.
+        # --------------------------------------------------------------
+        while True:
+            print('\n' + '=' * 68)
+            print('STEP 2: Forearm rotation-axis calibration')
+            print(f'For {TWIST_AXIS_SECONDS:.0f} seconds, keep the LEFT upper arm vertical,')
+            print('the elbow bent 90 degrees and the forearm pointing forward.')
+            print('Keep the shoulder, elbow and wrist position fixed. Slowly turn')
+            print('the whole forearm palm-down, palm-up, and back several times.')
+            print('Do not bend the wrist or move the elbow.')
+            print('=' * 68)
+            input('Press ENTER, then begin the forearm-only rotation...')
+            twist_samples = self._collect_samples(TWIST_AXIS_SECONDS)
+            _, twist_R_u_reported, _, twist_R_f_reported = self._arrays(
+                twist_samples)
+            twist_upper_excursion = self._rotation_excursion_deg(
+                twist_R_u_reported)
+            twist_forearm_excursion = self._rotation_excursion_deg(
+                twist_R_f_reported)
+            print('  Isolated rotation excursion:')
+            print(f'    upper topic:   {twist_upper_excursion:5.1f} deg')
+            print(f'    forearm topic: {twist_forearm_excursion:5.1f} deg')
+            try:
+                twist_axis_preview = estimate_local_rotation_axis(
+                    twist_R_f_reported)
+            except ValueError as exc:
+                print(f'    axis fit: {exc}')
+                twist_axis_preview = None
+            if twist_axis_preview is not None:
+                print(f'    axis fit: RMS={twist_axis_preview.rms_error_deg:.2f} deg, '
+                      f'max={twist_axis_preview.max_error_deg:.2f} deg, '
+                      f'range={twist_axis_preview.motion_range_deg:.1f} deg')
+            if (twist_upper_excursion <= 15.0 and
+                    twist_forearm_excursion >= 40.0 and
+                    twist_axis_preview is not None and
+                    twist_axis_preview.motion_range_deg >= 60.0 and
+                    twist_axis_preview.rms_error_deg <= 15.0):
+                if twist_axis_preview.rms_error_deg > 8.0:
+                    print('[WARNING] Twist-axis motion is usable but marginal; '
+                          'keep the elbow steadier when practical.')
+                break
+            print('[RETRY] Keep the upper arm and elbow fixed, and rotate only')
+            print('the forearm through a wider palm-down/palm-up range.')
+
+        # Three poses span independent upper-arm directions.  A fourth,
+        # STRAIGHT_DOWN, overdetermines the forearm-direction fit and checks it
+        # near full elbow extension.
         reference_specs = [
             ('down',
              'LEFT upper arm vertical down; elbow bent 90 degrees;\n'
@@ -339,7 +384,9 @@ class DualCalibrationNode(Node):
             reported_forearm_rotations,
             np.array(target_upper_rotations),
             np.array(target_forearm_rotations),
-            labels)
+            labels,
+            twist_R_u_reported,
+            twist_R_f_reported)
         print(f'  Reference diagnostic saved: {diagnostic_path}')
 
         position_fit = fit_position_direction_calibration(
@@ -350,9 +397,12 @@ class DualCalibrationNode(Node):
         for convention in ROTATION_CONVENTIONS:
             corrected_forearm = apply_rotation_convention(
                 reported_forearm_rotations, convention)
-            fit = fit_single_direction_calibration(
-                corrected_forearm,
-                target_forearm_directions)
+            corrected_twist = apply_rotation_convention(
+                twist_R_f_reported, convention)
+            axis_result = estimate_local_rotation_axis(corrected_twist)
+            fit = fit_single_direction_with_known_axis(
+                corrected_forearm, target_forearm_directions,
+                axis_result.axis_local)
             relative_errors = relative_rotation_errors(
                 corrected_forearm,
                 np.asarray(target_forearm_rotations),
@@ -364,18 +414,24 @@ class DualCalibrationNode(Node):
                 float(np.max(relative_errors)),
                 fit,
                 corrected_forearm,
+                axis_result,
             )
         print('\n  Forearm quaternion convention diagnostic:')
         for convention in ROTATION_CONVENTIONS:
-            direction_rms, direction_max, relative_rms, relative_max, _, _ = (
+            (direction_rms, direction_max, relative_rms, relative_max,
+             _, _, axis_result) = (
                 convention_fits[convention])
             print(f'    {convention:20s}: direction RMS={direction_rms:5.2f}, '
                   f'max={direction_max:5.2f} deg; relative-motion '
-                  f'RMS={relative_rms:5.2f}, max={relative_max:5.2f} deg')
+                  f'RMS={relative_rms:5.2f}, max={relative_max:5.2f} deg;\n'
+                  f'      twist-axis RMS={axis_result.rms_error_deg:4.2f}, '
+                  f'max={axis_result.max_error_deg:4.2f} deg, '
+                  f'range={axis_result.motion_range_deg:5.1f} deg')
         rotation_convention = min(
             ROTATION_CONVENTIONS,
             key=lambda name: convention_fits[name][2])
-        _, _, _, _, forearm_fit, corrected_forearm_rotations = (
+        (_, _, _, _, forearm_fit, corrected_forearm_rotations,
+         twist_axis_result) = (
             convention_fits[rotation_convention])
         print(f'  Selected rotation convention from relative motion: '
               f'{rotation_convention}')
@@ -430,32 +486,46 @@ class DualCalibrationNode(Node):
         max_reference_error = float(max(
             np.max(upper_reference_errors), np.max(forearm_reference_errors),
             np.max(forearm_twist_reference_errors)))
+        if (twist_axis_result.motion_range_deg < 60.0 or
+                twist_axis_result.rms_error_deg > 15.0):
+            print('[ERROR] Forearm rotation-axis calibration is unreliable.')
+            print('[Dual calibration] Stopped without saving. Repeat STEP 2')
+            print('with the elbow fixed and a wider, slower palm rotation.')
+            return
         if not 0.08 <= position_fit.receiver_radius_m <= 0.35:
             print('[ERROR] Upper receiver position radius is implausible.')
             print('[Dual calibration] Stopped without saving.')
             return
-        if position_rms_m > 0.03 or position_max_m > 0.05:
+        position_quality_warning = (
+            position_rms_m > 0.03 or position_max_m > 0.05)
+        if position_rms_m > 0.035 or position_max_m > 0.065:
             print('[ERROR] Upper receiver position model error is too large.')
             print('[Dual calibration] Stopped without saving. Keep the torso and')
             print('transmitter fixed, then repeat the reference poses.')
             return
+        if position_quality_warning:
+            print('[WARNING] Upper receiver position model is marginal '
+                  '(recommended RMS <= 30 mm and max <= 50 mm).')
         if max_reference_error > 15.0:
             print('[ERROR] Reference-pose error exceeds 15 degrees.')
             print('[Dual calibration] Stopped without saving. Repeat the reference poses.')
             return
-        if max_reference_error > 10.0:
+        reference_quality_warning = max_reference_error > 10.0
+        if reference_quality_warning:
             print('[WARNING] Reference-pose error exceeds 10 degrees.')
-            if input('Save calibration anyway? [y/N]: ').strip().lower() != 'y':
+        if position_quality_warning or reference_quality_warning:
+            if input('Save calibration with these warnings? [y/N]: ').strip().lower() != 'y':
                 print('[Dual calibration] Cancelled. Repeat the reference poses.')
                 return
 
         calibration = {
-            'version': 7,
+            'version': 8,
             'mode': 'dual_receiver_hybrid',
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
             'reference_pose_labels': list(reference_labels),
             'rotation_convention': rotation_convention,
             'rotation_convention_method': 'relative_reference_motion',
+            'forearm_axis_method': 'isolated_pronation_supination',
             'forearm_axis_local': _vector_list(forearm_axis_local),
             'upper_position_rotation_tx_to_body': _matrix_list(
                 upper_position_align),
@@ -470,6 +540,16 @@ class DualCalibrationNode(Node):
                 **{key: round(float(value), 8) for key, value in static_quality.items()},
                 'upper_assignment_excursion_deg': round(upper_excursion, 4),
                 'forearm_assignment_excursion_deg': round(forearm_excursion, 4),
+                'twist_upper_excursion_deg': round(
+                    twist_upper_excursion, 4),
+                'twist_forearm_excursion_deg': round(
+                    twist_forearm_excursion, 4),
+                'twist_axis_rms_error_deg': round(
+                    twist_axis_result.rms_error_deg, 4),
+                'twist_axis_max_error_deg': round(
+                    twist_axis_result.max_error_deg, 4),
+                'twist_axis_motion_range_deg': round(
+                    twist_axis_result.motion_range_deg, 4),
                 'as_reported_relative_rotation_rms_deg': round(
                     convention_fits[ROTATION_AS_REPORTED][2], 4),
                 'transpose_relative_rotation_rms_deg': round(
@@ -541,7 +621,9 @@ class DualCalibrationNode(Node):
     def _save_reference_diagnostic(upper_positions, forearm_positions,
                                    upper_rotations, forearm_rotations,
                                    target_upper_rotations,
-                                   target_forearm_rotations, labels):
+                                   target_forearm_rotations, labels,
+                                   twist_upper_rotations,
+                                   twist_forearm_rotations):
         os.makedirs(CALIBRATION_LOG_DIR, exist_ok=True)
         timestamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
         path = os.path.join(
@@ -556,6 +638,10 @@ class DualCalibrationNode(Node):
             target_upper_rotations=np.asarray(target_upper_rotations),
             target_forearm_rotations=np.asarray(target_forearm_rotations),
             labels=np.asarray(labels),
+            twist_upper_rotations_reported=np.asarray(
+                twist_upper_rotations),
+            twist_forearm_rotations_reported=np.asarray(
+                twist_forearm_rotations),
         )
         return path
 

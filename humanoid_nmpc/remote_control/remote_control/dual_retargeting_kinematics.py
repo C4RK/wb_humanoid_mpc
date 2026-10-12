@@ -66,6 +66,17 @@ class SingleDirectionCalibrationResult:
 
 
 @dataclass(frozen=True)
+class LocalRotationAxisResult:
+    """Receiver-local hinge axis estimated from an isolated axial motion."""
+
+    axis_local: np.ndarray
+    rms_error_deg: float
+    max_error_deg: float
+    motion_range_deg: float
+    pair_count: int
+
+
+@dataclass(frozen=True)
 class PositionDirectionCalibrationResult:
     """Upper-arm direction model obtained from receiver positions."""
 
@@ -326,6 +337,89 @@ def rotation_vector(rotation: np.ndarray) -> np.ndarray:
     return angle * skew / (2.0 * math.sin(angle))
 
 
+def estimate_local_rotation_axis(
+        rotations: np.ndarray,
+        min_pair_angle_deg: float = 20.0,
+        max_pair_angle_deg: float = 170.0,
+        max_samples: int = 80) -> LocalRotationAxisResult:
+    """Estimate a fixed receiver-local axis from an isolated twist motion.
+
+    For a receiver rigidly attached to the forearm, pronation/supination has
+    ``R_j = R_i M.T Rx(delta) M``.  Consequently every relative rotation
+    ``R_i.T R_j`` has the same axis in receiver-local coordinates.  Axis signs
+    are irrelevant, so a weighted principal-component fit is used.
+    """
+    rotations = np.asarray(rotations, dtype=float)
+    if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+        raise ValueError('rotations must have shape (N, 3, 3)')
+    if len(rotations) < 20:
+        raise ValueError('at least 20 rotations are required for axis calibration')
+    if not np.all(np.isfinite(rotations)):
+        raise ValueError('rotation samples contain non-finite values')
+
+    sample_count = min(len(rotations), max_samples)
+    indices = np.unique(np.linspace(
+        0, len(rotations) - 1, sample_count, dtype=int))
+    unit_axes = []
+    weights = []
+    motion_range = 0.0
+    min_angle = math.radians(min_pair_angle_deg)
+    max_angle = math.radians(max_pair_angle_deg)
+    for first_offset, first in enumerate(indices[:-1]):
+        for second in indices[first_offset + 1:]:
+            vector = rotation_vector(
+                rotations[first].T @ rotations[second])
+            angle = float(np.linalg.norm(vector))
+            motion_range = max(motion_range, angle)
+            if min_angle <= angle <= max_angle:
+                unit_axes.append(vector / angle)
+                weights.append(angle * angle)
+    if len(unit_axes) < 20:
+        raise ValueError(
+            'isolated twist motion did not contain enough rotation; '
+            'rotate the palm farther in both directions')
+
+    unit_axes = np.asarray(unit_axes)
+    weights = np.asarray(weights)
+    # Refit after rejecting axes inconsistent with the dominant motion.  This
+    # suppresses pairs that mainly contain a small elbow/shoulder correction or
+    # an isolated orientation glitch rather than forearm twist.
+    inliers = np.ones(len(unit_axes), dtype=bool)
+    for _ in range(4):
+        covariance = np.einsum(
+            'n,ni,nj->ij', weights[inliers],
+            unit_axes[inliers], unit_axes[inliers])
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+        axis = eigenvectors[:, int(np.argmax(eigenvalues))]
+        residuals = np.degrees(np.arccos(np.clip(
+            np.abs(unit_axes @ axis), -1.0, 1.0)))
+        selected = residuals[inliers]
+        median = float(np.median(selected))
+        mad = float(np.median(np.abs(selected - median)))
+        threshold = max(8.0, median + 3.0 * 1.4826 * mad)
+        new_inliers = residuals <= threshold
+        if np.count_nonzero(new_inliers) < 20:
+            break
+        if np.array_equal(new_inliers, inliers):
+            break
+        inliers = new_inliers
+    # Give the otherwise sign-ambiguous result a deterministic representation.
+    largest_component = int(np.argmax(np.abs(axis)))
+    if axis[largest_component] < 0.0:
+        axis = -axis
+
+    rms = float(np.sqrt(np.average(
+        np.square(residuals[inliers]), weights=weights[inliers])))
+    maximum = float(np.max(residuals[inliers]))
+    return LocalRotationAxisResult(
+        axis_local=axis,
+        rms_error_deg=rms,
+        max_error_deg=maximum,
+        motion_range_deg=math.degrees(motion_range),
+        pair_count=int(np.count_nonzero(inliers)),
+    )
+
+
 def rotation_error_deg(actual: np.ndarray, wanted: np.ndarray) -> float:
     """Geodesic orientation error between two rotation matrices."""
     return math.degrees(float(np.linalg.norm(
@@ -537,6 +631,38 @@ def fit_single_direction_calibration(rotations_tx: np.ndarray,
     )
 
 
+def fit_single_direction_with_known_axis(
+        rotations_tx: np.ndarray,
+        target_directions_body: np.ndarray,
+        axis_local: np.ndarray,
+        ) -> SingleDirectionCalibrationResult:
+    """Fit frame alignment after an isolated motion identified the local axis."""
+    rotations = np.asarray(rotations_tx, dtype=float)
+    targets = np.asarray(target_directions_body, dtype=float)
+    axis = np.asarray(axis_local, dtype=float)
+    if rotations.ndim != 3 or rotations.shape[1:] != (3, 3):
+        raise ValueError('rotations must have shape (N, 3, 3)')
+    if targets.shape != (len(rotations), 3):
+        raise ValueError('target directions must have shape (N, 3)')
+    if axis.shape != (3,) or np.linalg.norm(axis) < 1e-9:
+        raise ValueError('axis_local must be a nonzero 3-vector')
+    axis = axis / np.linalg.norm(axis)
+
+    best = None
+    for signed_axis in (axis, -axis):
+        measured = np.einsum('nij,j->ni', rotations, signed_axis)
+        alignment, errors = fit_body_alignment(measured, targets)
+        rms = float(np.sqrt(np.mean(np.square(errors))))
+        if best is None or rms < best[0]:
+            best = (rms, alignment, signed_axis.copy(), errors)
+    _, alignment, signed_axis, errors = best
+    return SingleDirectionCalibrationResult(
+        rotation_tx_to_body=alignment,
+        axis_local=signed_axis,
+        errors_deg=errors,
+    )
+
+
 def fit_position_direction_calibration(positions_tx: np.ndarray,
                                        target_directions_body: np.ndarray,
                                        ) -> PositionDirectionCalibrationResult:
@@ -679,7 +805,7 @@ def dual_joint_angles_from_segment_vectors(
         forearm_sensor_mount: np.ndarray,
         previous_yaw: float = 0.0,
         previous_wrist: float = 0.0,
-        min_yaw_observability: float = 0.35) -> np.ndarray:
+        min_yaw_observability: float = 0.55) -> np.ndarray:
     """Map body-frame segment directions and forearm attitude to joints."""
     upper_direction = np.asarray(upper_direction_body, dtype=float).copy()
     forearm_direction = np.asarray(forearm_direction_body, dtype=float).copy()

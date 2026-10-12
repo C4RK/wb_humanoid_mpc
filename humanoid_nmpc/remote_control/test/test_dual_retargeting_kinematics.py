@@ -9,11 +9,13 @@ from remote_control.dual_retargeting_kinematics import (
     dual_joint_angles,
     dual_joint_angles_from_directions,
     dual_joint_angles_from_segment_vectors,
+    estimate_local_rotation_axis,
     fit_body_alignment,
     fit_orientation_calibration,
     fit_position_direction_calibration,
     fit_segment_direction_calibration,
     fit_single_direction_calibration,
+    fit_single_direction_with_known_axis,
     relative_rotation_errors,
     reference_mounts,
     solve_elbow_pivot,
@@ -36,6 +38,50 @@ def random_rotation(rng):
 
 
 class DualRetargetingKinematicsTest(unittest.TestCase):
+
+    def test_isolated_twist_recovers_receiver_local_forearm_axis(self):
+        alignment = rotation_z(0.37) @ rotation_y(-0.22)
+        mount = rotation_y(0.31) @ rotation_z(-0.48)
+        forearm_frame = rotation_z(0.26) @ rotation_y(-0.19)
+        wrist_angles = np.linspace(-1.35, 1.25, 120)
+        rotations = np.array([
+            alignment.T @ forearm_frame @ rotation_x(angle) @ mount
+            for angle in wrist_angles
+        ])
+
+        result = estimate_local_rotation_axis(rotations)
+        expected = mount.T @ FOREARM_ZERO_AXIS
+
+        self.assertGreater(abs(float(np.dot(result.axis_local, expected))), 0.9999)
+        self.assertLess(result.rms_error_deg, 1e-5)
+        self.assertGreater(result.motion_range_deg, 140.0)
+
+    def test_known_twist_axis_rejects_wrist_rotation_from_direction_fit(self):
+        alignment = rotation_z(-0.38) @ rotation_x(0.21)
+        mount = rotation_y(0.29) @ rotation_z(-0.17)
+        references = [
+            (0.0, 0.0, 0.0, 0.0),
+            (-math.pi / 2.0, 0.0, 0.0, 0.0),
+            (0.0, math.pi / 2.0, 0.0, math.pi / 2.0),
+            (0.0, 0.0, 0.0, math.pi / 2.0),
+        ]
+        wrist_angles = [0.8, -1.1, 0.55, -0.7]
+        forearm_frames = np.array([
+            arm_frames(*angles)[1] for angles in references])
+        sensors = np.array([
+            alignment.T @ frame @ rotation_x(wrist) @ mount
+            for frame, wrist in zip(forearm_frames, wrist_angles)
+        ])
+        targets = np.array([
+            frame @ FOREARM_ZERO_AXIS for frame in forearm_frames])
+
+        result = fit_single_direction_with_known_axis(
+            sensors, targets, mount.T @ FOREARM_ZERO_AXIS)
+
+        np.testing.assert_allclose(result.rotation_tx_to_body, alignment, atol=1e-9)
+        self.assertGreater(float(np.dot(
+            result.axis_local, mount.T @ FOREARM_ZERO_AXIS)), 0.999999)
+        np.testing.assert_allclose(result.errors_deg, 0.0, atol=2e-6)
 
     def test_relative_rotation_errors_identify_reported_direction(self):
         alignment = rotation_z(0.42) @ rotation_y(-0.31) @ rotation_x(0.18)
@@ -95,6 +141,27 @@ class DualRetargetingKinematicsTest(unittest.TestCase):
 
         self.assertAlmostEqual(angles[2], previous_yaw)
         self.assertAlmostEqual(angles[3], math.radians(75.0))
+        self.assertAlmostEqual(angles[4], previous_wrist)
+
+    def test_sixty_degree_elbow_holds_unreliable_yaw_and_wrist(self):
+        previous_yaw = -0.31
+        previous_wrist = 0.28
+        shoulder, forearm = arm_frames(
+            0.0, 0.0, 0.9, math.radians(60.0))
+        upper_direction = shoulder @ UPPER_ARM_ZERO_AXIS
+        forearm_direction = forearm @ FOREARM_ZERO_AXIS
+
+        angles = dual_joint_angles_from_segment_vectors(
+            upper_direction,
+            forearm_direction,
+            forearm @ rotation_x(-0.7),
+            np.eye(3),
+            previous_yaw=previous_yaw,
+            previous_wrist=previous_wrist,
+        )
+
+        self.assertAlmostEqual(angles[2], previous_yaw)
+        self.assertAlmostEqual(angles[3], math.radians(60.0))
         self.assertAlmostEqual(angles[4], previous_wrist)
 
     def test_bent_arm_keeps_yaw_and_wrist_observable(self):

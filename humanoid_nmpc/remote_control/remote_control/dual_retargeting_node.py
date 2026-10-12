@@ -97,7 +97,12 @@ class DualRetargetingNode(Node):
         self.declare_parameter('max_elbow_mismatch_m', 0.05)
         self.declare_parameter('max_upper_radius_error_m', 0.05)
         self.declare_parameter('watchdog_timeout_s', 0.25)
-        self.declare_parameter('min_yaw_observability', 0.35)
+        # Shoulder axial rotation and forearm twist become poorly conditioned
+        # before the arm is completely straight.  Freeze both once the
+        # perpendicular forearm component falls below 0.55 (about 57 degrees
+        # in this elbow-angle convention) so measurement noise is not turned
+        # into a yaw/wrist excursion during elbow extension.
+        self.declare_parameter('min_yaw_observability', 0.55)
         self.declare_parameter('publish_joint_targets', False)
         self.filter_tau = max(0.0, float(self.get_parameter('filter_time_constant_s').value))
         self.max_speed = max(0.1, float(self.get_parameter('max_joint_speed_rad_s').value))

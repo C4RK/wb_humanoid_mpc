@@ -1,7 +1,7 @@
 calibration:
-  version: 7
+  version: 8
   mode: dual_receiver_hybrid
-  calibrated_at: '2026-10-11T22:30:20.811182+00:00'
+  calibrated_at: '2026-10-12T12:06:32.250333+00:00'
   reference_pose_labels:
   - down
   - forward
@@ -9,85 +9,91 @@ calibration:
   - straight_down
   rotation_convention: as_reported
   rotation_convention_method: relative_reference_motion
+  forearm_axis_method: isolated_pronation_supination
   forearm_axis_local:
-  - -0.09222557
-  - 0.99046293
-  - 0.10236033
+  - -0.0770114
+  - 0.99702952
+  - -0.00117508
   upper_position_rotation_tx_to_body:
-  - - 0.27158347
-    - -0.05224972
-    - 0.96099552
-  - - 0.90767891
-    - 0.34584979
-    - -0.23771186
-  - - -0.31993972
-    - 0.93683397
-    - 0.14135306
+  - - 0.48156061
+    - -0.02720882
+    - 0.87599033
+  - - 0.83744075
+    - 0.3090298
+    - -0.45076998
+  - - -0.25844219
+    - 0.95066307
+    - 0.17160236
   upper_shoulder_center_tx_m:
-  - 0.21651936
-  - 0.02361771
-  - -0.08012136
-  upper_receiver_radius_m: 0.1597945
+  - 0.20886976
+  - 0.02471935
+  - -0.10766494
+  upper_receiver_radius_m: 0.16406616
   forearm_rotation_tx_to_body:
-  - - -0.20757329
-    - -0.05135168
-    - 0.97687068
-  - - 0.97801106
-    - -0.03150705
-    - 0.20615936
-  - - 0.02019168
-    - 0.99818351
-    - 0.05676253
+  - - 0.00430712
+    - -0.11077953
+    - 0.99383567
+  - - 0.99668047
+    - -0.08032356
+    - -0.01327284
+  - - 0.08129877
+    - 0.99059377
+    - 0.11006583
   forearm_sensor_mount_rotation:
-  - - -0.04055245
-    - 0.99791218
-    - 0.05026704
-  - - -0.77272893
-    - -0.06321571
-    - 0.63158038
-  - - 0.63343942
-    - -0.01323067
-    - 0.77367917
+  - - -0.07309405
+    - 0.99670739
+    - 0.03509457
+  - - -0.48974047
+    - -0.0665248
+    - 0.86932659
+  - - 0.8687989
+    - 0.04635537
+    - 0.49299051
   quality:
-    upper_position_rms_m: 0.00080743
-    forearm_position_rms_m: 0.00147217
-    upper_angle_rms_deg: 0.27144128
-    forearm_angle_rms_deg: 0.24326391
-    static_samples: 200.0
-    upper_assignment_excursion_deg: 12.1022
-    forearm_assignment_excursion_deg: 46.6811
-    as_reported_relative_rotation_rms_deg: 56.8964
-    transpose_relative_rotation_rms_deg: 118.1638
-    reference_max_error_deg: 13.1235
+    upper_position_rms_m: 0.00046241
+    forearm_position_rms_m: 0.00141203
+    upper_angle_rms_deg: 0.16104416
+    forearm_angle_rms_deg: 0.27880118
+    static_samples: 201.0
+    upper_assignment_excursion_deg: 12.6931
+    forearm_assignment_excursion_deg: 47.2495
+    twist_upper_excursion_deg: 5.8623
+    twist_forearm_excursion_deg: 47.1037
+    twist_axis_rms_error_deg: 7.6939
+    twist_axis_max_error_deg: 21.7355
+    twist_axis_motion_range_deg: 86.4082
+    as_reported_relative_rotation_rms_deg: 57.756
+    transpose_relative_rotation_rms_deg: 116.5464
+    reference_max_error_deg: 11.013
     upper_position_direction_errors_deg:
-    - 9.3479
-    - 12.1889
-    - 7.5949
-    - 1.5705
-    - 2.5368
-    - 6.8196
-    - 3.295
-    - 2.7673
-    - 4.1059
-    - 8.1167
-    - 7.546
-    - 7.7239
+    - 6.0541
+    - 6.6074
+    - 6.0133
+    - 1.4036
+    - 1.581
+    - 3.2614
+    - 3.4129
+    - 2.5668
+    - 1.905
+    - 8.1447
+    - 7.2636
+    - 7.2314
     forearm_direction_errors_deg:
-    - 3.5004
-    - 4.056
-    - 6.8046
-    - 8.1198
-    - 13.1235
-    - 12.5512
-    - 7.6227
-    - 10.8465
-    - 7.5585
-    - 11.5484
-    - 12.0582
-    - 11.9558
-    upper_position_model_rms_m: 0.02024273
-    upper_position_model_max_m: 0.03379176
+    - 2.5895
+    - 1.596
+    - 3.1632
+    - 8.9854
+    - 9.7041
+    - 11.013
+    - 10.1371
+    - 10.5809
+    - 10.4966
+    - 7.5511
+    - 10.5464
+    - 10.8263
+    upper_position_model_rms_m: 0.01581936
+    upper_position_model_max_m: 0.02461802
     forearm_twist_repeatability_errors_deg:
-    - 1.2202
-    - 3.1907
-    - 3.4609
+    - 1.6703
+    - 0.5385
+    - 1.8217
