@@ -27,6 +27,7 @@ from remote_control.dual_retargeting_kinematics import (
     mean_rotation,
     relative_rotation_errors,
     rotation_error_deg,
+    select_rotation_convention,
 )
 from remote_control.retargeting_kinematics import (
     FOREARM_ZERO_AXIS,
@@ -464,13 +465,14 @@ class DualCalibrationNode(Node):
                   f'      twist-axis RMS={axis_result.rms_error_deg:4.2f}, '
                   f'max={axis_result.max_error_deg:4.2f} deg, '
                   f'range={axis_result.motion_range_deg:5.1f} deg')
-        rotation_convention = min(
-            ROTATION_CONVENTIONS,
-            key=lambda name: convention_fits[name][2])
+        rotation_convention = select_rotation_convention(
+            {name: convention_fits[name][0] for name in ROTATION_CONVENTIONS},
+            {name: convention_fits[name][2] for name in ROTATION_CONVENTIONS})
         (_, _, _, _, forearm_fit, corrected_forearm_rotations,
          twist_axis_result) = (
             convention_fits[rotation_convention])
-        print(f'  Selected rotation convention from relative motion: '
+        print(f'  Selected rotation convention from direction residual '
+              f'(relative motion used as tie-break): '
               f'{rotation_convention}')
 
         upper_position_align = position_fit.rotation_tx_to_body
@@ -581,7 +583,7 @@ class DualCalibrationNode(Node):
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
             'reference_pose_labels': list(reference_labels),
             'rotation_convention': rotation_convention,
-            'rotation_convention_method': 'relative_reference_motion',
+            'rotation_convention_method': 'direction_residual_then_relative_motion',
             'forearm_axis_method': 'isolated_pronation_supination',
             'forearm_axis_local': _vector_list(forearm_axis_local),
             'upper_position_rotation_tx_to_body': _matrix_list(

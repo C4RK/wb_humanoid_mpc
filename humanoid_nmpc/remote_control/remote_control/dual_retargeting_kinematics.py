@@ -87,12 +87,45 @@ class PositionDirectionCalibrationResult:
     position_errors_m: np.ndarray
 
 
+@dataclass(frozen=True)
+class RigidPairConsistencyResult:
+    """Scatter of the transform between two receivers on one rigid chain."""
+
+    translation_rms_m: float
+    translation_max_m: float
+    rotation_rms_deg: float
+    rotation_max_deg: float
+
+
 ROTATION_AS_REPORTED = 'as_reported'
 ROTATION_TRANSPOSE_REPORTED = 'transpose_reported'
 ROTATION_CONVENTIONS = (
     ROTATION_AS_REPORTED,
     ROTATION_TRANSPOSE_REPORTED,
 )
+
+
+def select_rotation_convention(direction_rms_by_convention,
+                               relative_rms_by_convention) -> str:
+    """Select the quaternion direction that best recovers the segment axis.
+
+    Full relative-orientation residuals also contain human wrist twist and
+    reference-pose reconstruction error.  They are therefore only a tie-break
+    for the segment-direction residual used by retargeting.
+    """
+    for convention in ROTATION_CONVENTIONS:
+        if convention not in direction_rms_by_convention:
+            raise ValueError(f'missing direction score for {convention}')
+        if convention not in relative_rms_by_convention:
+            raise ValueError(f'missing relative-rotation score for {convention}')
+        scores = (float(direction_rms_by_convention[convention]),
+                  float(relative_rms_by_convention[convention]))
+        if not all(math.isfinite(score) for score in scores):
+            raise ValueError(f'non-finite rotation score for {convention}')
+    return min(
+        ROTATION_CONVENTIONS,
+        key=lambda name: (float(direction_rms_by_convention[name]),
+                          float(relative_rms_by_convention[name])))
 
 
 def apply_rotation_convention(rotations: np.ndarray, convention: str) -> np.ndarray:
@@ -276,6 +309,45 @@ def mean_rotation(rotations: np.ndarray) -> np.ndarray:
     correction = np.eye(3)
     correction[2, 2] = np.linalg.det(U @ Vt)
     return U @ correction @ Vt
+
+
+def rigid_pair_consistency(upper_positions: np.ndarray,
+                           upper_rotations: np.ndarray,
+                           forearm_positions: np.ndarray,
+                           forearm_rotations: np.ndarray,
+                           ) -> RigidPairConsistencyResult:
+    """Measure whether two receiver poses maintain one rigid transform.
+
+    During a straight-arm sweep with a neutral wrist, the upper-arm and
+    forearm receivers should behave as one rigid body.  Expressing the second
+    receiver in the first receiver's frame removes torso and transmitter
+    motion from this check.
+    """
+    p_u, R_u = _validate_pose_arrays(upper_positions, upper_rotations)
+    p_f, R_f = _validate_pose_arrays(forearm_positions, forearm_rotations)
+    if len(p_u) != len(p_f):
+        raise ValueError('upper-arm and forearm arrays must contain the same number of samples')
+
+    relative_positions = np.einsum(
+        'nji,nj->ni', R_u, p_f - p_u)
+    position_centre = np.median(relative_positions, axis=0)
+    position_errors = np.linalg.norm(
+        relative_positions - position_centre, axis=1)
+
+    relative_rotations = np.einsum(
+        'nji,njk->nik', R_u, R_f)
+    rotation_centre = mean_rotation(relative_rotations)
+    rotation_errors = np.array([
+        rotation_error_deg(rotation, rotation_centre)
+        for rotation in relative_rotations
+    ])
+
+    return RigidPairConsistencyResult(
+        translation_rms_m=float(np.sqrt(np.mean(np.square(position_errors)))),
+        translation_max_m=float(np.max(position_errors)),
+        rotation_rms_deg=float(np.sqrt(np.mean(np.square(rotation_errors)))),
+        rotation_max_deg=float(np.max(rotation_errors)),
+    )
 
 
 def fit_body_alignment(measured_directions: np.ndarray,
@@ -802,7 +874,10 @@ def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
                                      forearm_axis_local: np.ndarray,
                                      forearm_sensor_mount: np.ndarray,
                                      previous_yaw: float = 0.0,
-                                     previous_wrist: float = 0.0) -> np.ndarray:
+                                     previous_wrist: float = 0.0,
+                                     previous_pitch: float = 0.0,
+                                     min_pitch_observability: float = 0.2,
+                                     min_yaw_observability: float = 0.55) -> np.ndarray:
     """Map two segment directions and forearm twist to five arm angles."""
     alignment = np.asarray(rotation_tx_to_body, dtype=float)
     upper_aligned = alignment @ np.asarray(upper_sensor_rotation_tx, dtype=float)
@@ -816,6 +891,9 @@ def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
         forearm_sensor_mount,
         previous_yaw=previous_yaw,
         previous_wrist=previous_wrist,
+        previous_pitch=previous_pitch,
+        min_pitch_observability=min_pitch_observability,
+        min_yaw_observability=min_yaw_observability,
     )
 
 
@@ -826,7 +904,9 @@ def dual_joint_angles_from_segment_vectors(
         forearm_sensor_mount: np.ndarray,
         previous_yaw: float = 0.0,
         previous_wrist: float = 0.0,
-        min_yaw_observability: float = 0.55) -> np.ndarray:
+        min_yaw_observability: float = 0.55,
+        previous_pitch: float = 0.0,
+        min_pitch_observability: float = 0.2) -> np.ndarray:
     """Map body-frame segment directions and forearm attitude to joints."""
     upper_direction = np.asarray(upper_direction_body, dtype=float).copy()
     forearm_direction = np.asarray(forearm_direction_body, dtype=float).copy()
@@ -838,7 +918,10 @@ def dual_joint_angles_from_segment_vectors(
     upper_direction /= np.linalg.norm(upper_direction)
     forearm_direction /= np.linalg.norm(forearm_direction)
 
-    pitch, roll = shoulder_pitch_roll(upper_direction)
+    pitch, roll = shoulder_pitch_roll(
+        upper_direction,
+        fallback_pitch=previous_pitch,
+        min_horizontal=min_pitch_observability)
     yaw, yaw_observable = shoulder_yaw(
         upper_direction, forearm_direction, pitch, roll,
         fallback=previous_yaw,

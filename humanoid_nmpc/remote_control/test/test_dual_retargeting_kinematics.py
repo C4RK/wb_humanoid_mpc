@@ -14,10 +14,12 @@ from remote_control.dual_retargeting_kinematics import (
     fit_orientation_calibration,
     fit_position_direction_calibration,
     fit_segment_direction_calibration,
+    select_rotation_convention,
     fit_single_direction_calibration,
     fit_single_direction_with_known_axis,
     relative_rotation_errors,
     reference_mounts,
+    rigid_pair_consistency,
     solve_elbow_pivot,
     solve_shoulder_pivot,
 )
@@ -38,6 +40,44 @@ def random_rotation(rng):
 
 
 class DualRetargetingKinematicsTest(unittest.TestCase):
+
+    def test_rigid_pair_consistency_is_zero_for_fixed_receiver_transform(self):
+        centre = np.array([0.12, -0.08, 0.31])
+        upper_to_shoulder = np.array([-0.18, 0.03, 0.02])
+        upper_to_forearm = np.array([0.27, -0.01, 0.04])
+        forearm_in_upper = rotation_x(0.23) @ rotation_z(-0.31)
+        angles = np.linspace(-1.1, 1.0, 80)
+        upper_rotations = np.array([
+            rotation_z(angle) @ rotation_y(0.35 * math.sin(angle))
+            for angle in angles
+        ])
+        forearm_rotations = np.array([
+            rotation @ forearm_in_upper for rotation in upper_rotations
+        ])
+        upper_positions = np.array([
+            centre - rotation @ upper_to_shoulder
+            for rotation in upper_rotations
+        ])
+        forearm_positions = np.array([
+            position + rotation @ upper_to_forearm
+            for position, rotation in zip(upper_positions, upper_rotations)
+        ])
+
+        result = rigid_pair_consistency(
+            upper_positions, upper_rotations,
+            forearm_positions, forearm_rotations)
+
+        self.assertLess(result.translation_rms_m, 1e-12)
+        self.assertLess(result.translation_max_m, 1e-12)
+        self.assertLess(result.rotation_rms_deg, 1e-6)
+        self.assertLess(result.rotation_max_deg, 1e-6)
+
+    def test_rotation_convention_prioritizes_segment_direction_residual(self):
+        selected = select_rotation_convention(
+            {'as_reported': 9.67, 'transpose_reported': 19.79},
+            {'as_reported': 135.42, 'transpose_reported': 108.72})
+
+        self.assertEqual(selected, 'as_reported')
 
     def test_isolated_twist_recovers_receiver_local_forearm_axis(self):
         alignment = rotation_z(0.37) @ rotation_y(-0.22)
@@ -201,6 +241,25 @@ class DualRetargetingKinematicsTest(unittest.TestCase):
         )
 
         np.testing.assert_allclose(angles, wanted, atol=1e-9)
+
+    def test_sideways_arm_holds_unobservable_pitch(self):
+        shoulder, forearm = arm_frames(
+            1.4, math.radians(85.0), 0.0, math.radians(75.0))
+        upper_direction = shoulder @ UPPER_ARM_ZERO_AXIS
+        forearm_direction = forearm @ FOREARM_ZERO_AXIS
+
+        angles = dual_joint_angles_from_segment_vectors(
+            upper_direction,
+            forearm_direction,
+            forearm,
+            np.eye(3),
+            previous_pitch=-0.63,
+            previous_yaw=0.21,
+            previous_wrist=-0.34,
+        )
+
+        self.assertAlmostEqual(angles[0], -0.63)
+        self.assertAlmostEqual(angles[1], math.radians(85.0), places=9)
 
     def test_shoulder_pivot_recovers_sensor_offset_and_center(self):
         rng = np.random.default_rng(12)

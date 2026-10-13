@@ -30,11 +30,20 @@ class EmTrackerNode(Node):
         self.declare_parameter('device_id', 'module-1')   # default from WMET API
         self.declare_parameter('device_port', 801)         # default TCP port from WMET API
         self.declare_parameter('publish_rate_hz', 50.0)
+        self.declare_parameter('min_quaternion_norm', 0.95)
+        self.declare_parameter('max_quaternion_norm', 1.05)
 
         device_ip        = self.get_parameter('device_ip').value
         self.device_id   = self.get_parameter('device_id').value
         device_port      = self.get_parameter('device_port').value
         publish_rate     = self.get_parameter('publish_rate_hz').value
+        self.min_quaternion_norm = float(
+            self.get_parameter('min_quaternion_norm').value)
+        self.max_quaternion_norm = float(
+            self.get_parameter('max_quaternion_norm').value)
+        if not (0.0 < self.min_quaternion_norm < self.max_quaternion_norm):
+            raise ValueError(
+                'quaternion norm limits must satisfy 0 < min < max')
 
         # --- Publisher ---
         # Publishes the receiver pose relative to the transmitter.
@@ -93,6 +102,19 @@ class EmTrackerNode(Node):
             self.get_logger().warn(f'WMET device error: {pose.error}', throttle_duration_sec=1.0)
             return
 
+        q = [float(value) for value in pose.quaternion_wxyz]
+        quaternion_norm = math.sqrt(sum(value * value for value in q))
+        if (not math.isfinite(quaternion_norm) or
+                quaternion_norm < self.min_quaternion_norm or
+                quaternion_norm > self.max_quaternion_norm):
+            self.get_logger().error(
+                f'Invalid raw WEMT quaternion norm={quaternion_norm:.3f}; '
+                f'expected [{self.min_quaternion_norm:.2f}, '
+                f'{self.max_quaternion_norm:.2f}]. Pose dropped. Power-cycle '
+                'the receiver if this persists.',
+                throttle_duration_sec=1.0)
+            return
+
         msg = PoseStamped()
 
         # Timestamp from the ROS2 clock (used for synchronization with other nodes)
@@ -111,11 +133,10 @@ class EmTrackerNode(Node):
         # --- Orientation: WEMT format is (w, x, y, z), ROS2 format is also (x, y, z, w) ---
         # WEMT API returns quaternion_wxyz = [w, x, y, z]
         # ROS2 geometry_msgs uses fields .x .y .z .w  (same values, just named separately)
-        q = pose.quaternion_wxyz #四元数对齐
-        msg.pose.orientation.w = q[0]
-        msg.pose.orientation.x = q[1]
-        msg.pose.orientation.y = q[2]
-        msg.pose.orientation.z = q[3]
+        msg.pose.orientation.w = q[0] / quaternion_norm
+        msg.pose.orientation.x = q[1] / quaternion_norm
+        msg.pose.orientation.y = q[2] / quaternion_norm
+        msg.pose.orientation.z = q[3] / quaternion_norm
 
         self.pose_publisher.publish(msg)
 

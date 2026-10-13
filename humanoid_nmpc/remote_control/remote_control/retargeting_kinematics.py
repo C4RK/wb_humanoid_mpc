@@ -56,8 +56,15 @@ def arm_directions(pitch: float, roll: float, yaw: float,
     return shoulder @ UPPER_ARM_ZERO_AXIS, forearm @ FOREARM_ZERO_AXIS
 
 
-def shoulder_pitch_roll(upper_arm_direction: np.ndarray) -> Tuple[float, float]:
-    """Recover shoulder pitch and roll from the shoulder-to-elbow direction."""
+def shoulder_pitch_roll(upper_arm_direction: np.ndarray,
+                        fallback_pitch: float = 0.0,
+                        min_horizontal: float = 1e-8) -> Tuple[float, float]:
+    """Recover shoulder pitch and roll from the shoulder-to-elbow direction.
+
+    Pitch is undefined when the arm points exactly sideways (roll is +/-90
+    degrees).  ``fallback_pitch`` preserves a continuous solution while the
+    horizontal projection is too small to determine pitch reliably.
+    """
     u = np.asarray(upper_arm_direction, dtype=float)
     norm = float(np.linalg.norm(u))
     if norm < 1e-9:
@@ -65,7 +72,8 @@ def shoulder_pitch_roll(upper_arm_direction: np.ndarray) -> Tuple[float, float]:
     u = u / norm
 
     horizontal = math.hypot(float(u[0]), float(u[2]))
-    pitch = 0.0 if horizontal < 1e-8 else math.atan2(-float(u[0]), -float(u[2]))
+    pitch = (float(fallback_pitch) if horizontal < float(min_horizontal)
+             else math.atan2(-float(u[0]), -float(u[2])))
     roll = math.asin(float(np.clip(u[1], -1.0, 1.0)))
     return pitch, roll
 

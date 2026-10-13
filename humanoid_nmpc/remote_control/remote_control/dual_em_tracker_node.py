@@ -29,6 +29,8 @@ class DualEmTrackerNode(Node):
         self.declare_parameter('publish_rate_hz', 50.0)
         self.declare_parameter('max_pose_age_ms', 100.0)
         self.declare_parameter('max_pair_skew_ms', 30.0)
+        self.declare_parameter('min_quaternion_norm', 0.95)
+        self.declare_parameter('max_quaternion_norm', 1.05)
 
         upper_ip = str(self.get_parameter('upper_arm_ip').value).strip()
         forearm_ip = str(self.get_parameter('forearm_ip').value).strip()
@@ -39,6 +41,10 @@ class DualEmTrackerNode(Node):
         publish_rate = float(self.get_parameter('publish_rate_hz').value)
         self.max_pose_age_s = float(self.get_parameter('max_pose_age_ms').value) / 1000.0
         self.max_pair_skew_s = float(self.get_parameter('max_pair_skew_ms').value) / 1000.0
+        self.min_quaternion_norm = float(
+            self.get_parameter('min_quaternion_norm').value)
+        self.max_quaternion_norm = float(
+            self.get_parameter('max_quaternion_norm').value)
 
         if not upper_ip:
             raise ValueError('upper_arm_ip is required')
@@ -48,6 +54,9 @@ class DualEmTrackerNode(Node):
             raise ValueError('upper_arm_id and forearm_id must be different')
         if publish_rate <= 0.0:
             raise ValueError('publish_rate_hz must be positive')
+        if not (0.0 < self.min_quaternion_norm < self.max_quaternion_norm):
+            raise ValueError(
+                'quaternion norm limits must satisfy 0 < min < max')
 
         self.upper_publisher = self.create_publisher(
             PoseStamped, '/em/upper_arm_pose', 10)
@@ -69,6 +78,7 @@ class DualEmTrackerNode(Node):
 
         self._last_raw_stamps = None
         self._published_pairs = 0
+        self._invalid_quaternion_active = False
         self._timer = self.create_timer(1.0 / publish_rate, self._read_and_publish)
         self.get_logger().info(
             'Waiting for both receivers; output topics are '
@@ -96,6 +106,36 @@ class DualEmTrackerNode(Node):
                 'Waiting for receiver data: ' + ', '.join(unavailable),
                 throttle_duration_sec=1.0)
             return
+
+        quaternion_norms = {}
+        invalid_quaternions = []
+        for label, pose in [('upper arm', upper), ('forearm', forearm)]:
+            try:
+                values = [float(value) for value in pose.quaternion_wxyz]
+                norm = math.sqrt(sum(value * value for value in values))
+            except (TypeError, ValueError, OverflowError):
+                norm = float('nan')
+            quaternion_norms[label] = norm
+            if (not math.isfinite(norm) or
+                    norm < self.min_quaternion_norm or
+                    norm > self.max_quaternion_norm):
+                invalid_quaternions.append(label)
+        if invalid_quaternions:
+            self._invalid_quaternion_active = True
+            norms_text = ', '.join(
+                f'{label}={quaternion_norms[label]:.3f}'
+                for label in ('upper arm', 'forearm'))
+            self.get_logger().error(
+                'Invalid raw WEMT quaternion norm: ' + norms_text +
+                f'; expected [{self.min_quaternion_norm:.2f}, '
+                f'{self.max_quaternion_norm:.2f}]. Pair dropped. Power-cycle '
+                'the affected receiver if this persists.',
+                throttle_duration_sec=1.0)
+            return
+        if self._invalid_quaternion_active:
+            self.get_logger().info(
+                'Raw WEMT quaternion norms recovered; publishing resumed.')
+            self._invalid_quaternion_active = False
 
         now_utc = datetime.now(timezone.utc)
         upper_age = (now_utc - upper.updated_at).total_seconds()
@@ -145,8 +185,6 @@ class DualEmTrackerNode(Node):
         msg.pose.position.z = float(pose.position_mm[2]) / 1000.0
         q = pose.quaternion_wxyz
         norm = math.sqrt(sum(float(v) ** 2 for v in q))
-        if norm < 1e-12:
-            raise ValueError(f'{pose.device_id} returned a zero quaternion')
         msg.pose.orientation.w = float(q[0]) / norm
         msg.pose.orientation.x = float(q[1]) / norm
         msg.pose.orientation.y = float(q[2]) / norm

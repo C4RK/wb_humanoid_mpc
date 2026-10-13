@@ -48,6 +48,15 @@ class RetargetingKinematicsTest(unittest.TestCase):
         self.assertTrue(observable)
         self.assertAlmostEqual(actual_yaw, wanted_yaw, places=9)
 
+    def test_shoulder_pitch_holds_previous_value_near_sideways_singularity(self):
+        upper, _ = arm_directions(1.7, math.radians(85.0), 0.0, 0.0)
+
+        actual_pitch, actual_roll = shoulder_pitch_roll(
+            upper, fallback_pitch=-0.42, min_horizontal=0.2)
+
+        self.assertAlmostEqual(actual_pitch, -0.42)
+        self.assertAlmostEqual(actual_roll, math.radians(85.0), places=9)
+
     def test_shoulder_yaw_holds_previous_value_near_full_extension(self):
         pitch, roll, yaw = -0.4, 0.3, 1.0
         upper, forearm = arm_directions(pitch, roll, yaw, math.radians(89.0))

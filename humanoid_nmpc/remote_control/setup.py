@@ -30,6 +30,8 @@ setup(
             "dual_em_tracker_node = remote_control.dual_em_tracker_node:main",
             "dual_calibration_node = remote_control.dual_calibration_node:main",
             "dual_retargeting_node = remote_control.dual_retargeting_node:main",
+            "dual_receiver_rigidity_check = remote_control.dual_receiver_rigidity_check:main",
+            "dual_raw_quaternion_check = remote_control.dual_raw_quaternion_check:main",
             "arm_target_udp_sender = remote_control.arm_target_udp_sender:main",
             "pose_sequence_node = remote_control.pose_sequence_node:main",
             "check_quaternion_stability = remote_control.check_quaternion_stability:main",

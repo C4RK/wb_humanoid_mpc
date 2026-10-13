@@ -25,8 +25,9 @@ Usage
     | grep --line-buffered '°' \
     | python3 mujoco_replay.py --live --model unitree
 
-Log format expected (output of retargeting_node with 1 Hz throttle):
+Log formats accepted (output of retargeting_node with 1 Hz throttle):
   [INFO] [...]: pitch=-6.3° roll=-2.3° yaw=+0.0° elbow=+71.3° wrist=+0.0°
+  [INFO] [...]: pitch=-6.3 roll=-2.3 yaw=+0.0 elbow=+71.3 wrist=+0.0 deg
 
 All five values are in degrees; the script converts them to radians.
 Old logs without the wrist= field are also accepted (wrist defaults to 0°).
@@ -82,12 +83,14 @@ PLAYBACK_SPEED = 1.0
 # Log parsing
 # ---------------------------------------------------------------------------
 
+_NUMBER = r'([+-]?(?:\d+(?:\.\d*)?|\.\d+))'
+_UNIT = r'(?:\s*(?:°|deg))?'
 _LOG_RE = re.compile(
-    r'pitch=([+-]?\d+\.?\d*)°\s+'
-    r'roll=([+-]?\d+\.?\d*)°\s+'
-    r'yaw=([+-]?\d+\.?\d*)°\s+'
-    r'elbow=([+-]?\d+\.?\d*)°'
-    r'(?:\s+wrist=([+-]?\d+\.?\d*)°)?'   # optional: old logs without wrist_roll
+    rf'pitch={_NUMBER}{_UNIT}\s+'
+    rf'roll={_NUMBER}{_UNIT}\s+'
+    rf'yaw={_NUMBER}{_UNIT}\s+'
+    rf'elbow={_NUMBER}{_UNIT}'
+    rf'(?:\s+wrist={_NUMBER}{_UNIT})?'  # optional: old logs without wrist_roll
 )
 
 _STAMP_RE = re.compile(r'\[(\d+)\.(\d+)\]')   # ROS stamp: [sec.nanosec]
@@ -138,6 +141,32 @@ def parse_log(text: str) -> tuple[list, list]:
     return timestamps, angles
 
 
+def interpolate_trajectory(timestamps: list, angles: list,
+                           sample_rate_hz: float = 30.0) -> tuple[list, list]:
+    """Linearly resample sparse terminal output for smooth visual replay."""
+    if sample_rate_hz <= 0.0:
+        raise ValueError('sample_rate_hz must be positive.')
+    if len(timestamps) != len(angles):
+        raise ValueError('timestamps and angles must have the same length.')
+    if len(timestamps) < 2:
+        return list(timestamps), list(angles)
+
+    source_t = np.asarray(timestamps, dtype=float)
+    source_q = np.asarray(angles, dtype=float)
+    if np.any(np.diff(source_t) <= 0.0):
+        raise ValueError('Log timestamps must be strictly increasing.')
+
+    step = 1.0 / sample_rate_hz
+    output_t = np.arange(0.0, source_t[-1], step)
+    if len(output_t) == 0 or not np.isclose(output_t[-1], source_t[-1]):
+        output_t = np.append(output_t, source_t[-1])
+    output_q = np.column_stack([
+        np.interp(output_t, source_t, source_q[:, joint_index])
+        for joint_index in range(source_q.shape[1])
+    ])
+    return output_t.tolist(), output_q.tolist()
+
+
 # ---------------------------------------------------------------------------
 # MuJoCo replay
 # ---------------------------------------------------------------------------
@@ -152,7 +181,7 @@ def find_joint_qpos_indices(model, joint_names: list) -> list:
 
 
 def replay(scene_xml: str, timestamps: list, angles: list,
-           save_path: str | None = None):
+           save_path: str | None = None, sample_rate_hz: float = 30.0):
     """
     Load the MuJoCo scene and replay the joint angle sequence.
 
@@ -161,6 +190,10 @@ def replay(scene_xml: str, timestamps: list, angles: list,
     """
     import mujoco
     import mujoco.viewer
+
+    recorded_frames = len(timestamps)
+    timestamps, angles = interpolate_trajectory(
+        timestamps, angles, sample_rate_hz=sample_rate_hz)
 
     print(f'Loading model: {scene_xml}')
     model = mujoco.MjModel.from_xml_path(scene_xml)
@@ -191,7 +224,8 @@ def replay(scene_xml: str, timestamps: list, angles: list,
         return
 
     print(f'Left-arm qpos indices: {arm_qpos_idx}')
-    print(f'Loaded {len(timestamps)} frames  '
+    print(f'Loaded {recorded_frames} recorded samples; interpolated to '
+          f'{len(timestamps)} frames at {sample_rate_hz:g} Hz  '
           f'(duration: {timestamps[-1]:.1f} s)\n')
     print('Joint angle ranges in this trajectory:')
     arr = np.degrees(angles)
@@ -372,6 +406,8 @@ def main():
                         help='Save replay to video file instead of viewer')
     parser.add_argument('--speed', type=float, default=1.0,
                         help='Playback speed multiplier (default: 1.0)')
+    parser.add_argument('--fps', type=float, default=30.0,
+                        help='Interpolation/render rate in Hz (default: 30)')
     args = parser.parse_args()
 
     global PLAYBACK_SPEED
@@ -419,7 +455,8 @@ def main():
     timestamps, angles = parse_log(text)
     print(f'Parsed {len(angles)} frames from log.')
 
-    replay(scene_xml, timestamps, angles, save_path=args.save)
+    replay(scene_xml, timestamps, angles, save_path=args.save,
+           sample_rate_hz=args.fps)
 
 
 if __name__ == '__main__':

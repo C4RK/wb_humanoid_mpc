@@ -105,6 +105,10 @@ class DualRetargetingNode(Node):
         # in this elbow-angle convention) so measurement noise is not turned
         # into a yaw/wrist excursion during elbow extension.
         self.declare_parameter('min_yaw_observability', 0.55)
+        # Pitch is undefined at shoulder roll +/-90 degrees. Preserve the
+        # previous pitch when the upper arm is within about 11.5 degrees of
+        # that sideways singularity (horizontal projection below 0.2).
+        self.declare_parameter('min_pitch_observability', 0.2)
         self.declare_parameter('publish_joint_targets', False)
         self.filter_tau = max(0.0, float(self.get_parameter('filter_time_constant_s').value))
         self.max_speed = max(0.1, float(self.get_parameter('max_joint_speed_rad_s').value))
@@ -115,6 +119,8 @@ class DualRetargetingNode(Node):
         self.watchdog_timeout = max(0.05, float(self.get_parameter('watchdog_timeout_s').value))
         self.min_yaw_observability = float(np.clip(
             self.get_parameter('min_yaw_observability').value, 0.05, 0.95))
+        self.min_pitch_observability = float(np.clip(
+            self.get_parameter('min_pitch_observability').value, 0.01, 0.5))
         self.publish_joint_targets = bool(
             self.get_parameter('publish_joint_targets').value)
         if self.calibration_dry_run_only and self.publish_joint_targets:
@@ -248,16 +254,21 @@ class DualRetargetingNode(Node):
                 forearm_direction,
                 forearm_aligned,
                 self.forearm_mount,
+                previous_pitch=float(self._raw_angles[0]),
                 previous_yaw=float(self._raw_angles[2]),
                 previous_wrist=float(self._raw_angles[4]),
+                min_pitch_observability=self.min_pitch_observability,
                 min_yaw_observability=self.min_yaw_observability)
         elif self.use_segment_directions:
             raw = dual_joint_angles_from_directions(
                 R_u, R_f, self.R_align,
                 self.upper_axis_local, self.forearm_axis_local,
                 self.forearm_mount,
+                previous_pitch=float(self._raw_angles[0]),
                 previous_yaw=float(self._raw_angles[2]),
-                previous_wrist=float(self._raw_angles[4]))
+                previous_wrist=float(self._raw_angles[4]),
+                min_pitch_observability=self.min_pitch_observability,
+                min_yaw_observability=self.min_yaw_observability)
         else:
             raw = dual_joint_angles(
                 R_u, R_f, self.R_align, self.upper_mount, self.forearm_mount,
