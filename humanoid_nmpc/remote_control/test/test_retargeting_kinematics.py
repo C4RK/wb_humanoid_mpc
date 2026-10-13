@@ -12,6 +12,7 @@ from remote_control.retargeting_kinematics import (
     rotation_z,
     sensor_mount_from_reference,
     shoulder_pitch_roll,
+    shoulder_pitch_roll_continuous,
     shoulder_yaw,
     wrist_roll,
 )
@@ -56,6 +57,50 @@ class RetargetingKinematicsTest(unittest.TestCase):
 
         self.assertAlmostEqual(actual_pitch, -0.42)
         self.assertAlmostEqual(actual_roll, math.radians(85.0), places=9)
+
+    def test_shoulder_pitch_uses_nearest_periodic_solution(self):
+        upper, _ = arm_directions(math.radians(-179.0), 0.0, 0.0, 0.0)
+
+        actual_pitch, _ = shoulder_pitch_roll(
+            upper, fallback_pitch=math.radians(179.0))
+
+        self.assertAlmostEqual(actual_pitch, math.radians(181.0), places=9)
+
+    def test_shoulder_pitch_hysteresis_holds_until_direction_is_observable(self):
+        previous_pitch = 0.0
+        locked = False
+
+        upper, _ = arm_directions(0.0, 0.0, 0.0, 0.0)
+        pitch, _, locked, observability = shoulder_pitch_roll_continuous(
+            upper, previous_pitch, locked)
+        self.assertFalse(locked)
+        self.assertGreater(observability, 0.65)
+
+        # The measured direction contains a large apparent pitch near a side
+        # raise.  It must not replace the last well-conditioned solution.
+        upper, _ = arm_directions(2.0, math.radians(70.0), 0.0, 0.0)
+        pitch, _, locked, observability = shoulder_pitch_roll_continuous(
+            upper, pitch, locked)
+        self.assertTrue(locked)
+        self.assertLess(observability, 0.5)
+        self.assertAlmostEqual(pitch, previous_pitch)
+
+        # Remaining inside the hysteresis band keeps the solution locked.
+        upper, _ = arm_directions(-1.7, math.radians(55.0), 0.0, 0.0)
+        pitch, _, locked, observability = shoulder_pitch_roll_continuous(
+            upper, pitch, locked)
+        self.assertTrue(locked)
+        self.assertGreater(observability, 0.5)
+        self.assertLess(observability, 0.65)
+        self.assertAlmostEqual(pitch, previous_pitch)
+
+        # Once clearly away from sideways, pitch is safely reacquired.
+        upper, _ = arm_directions(-0.3, math.radians(40.0), 0.0, 0.0)
+        pitch, _, locked, observability = shoulder_pitch_roll_continuous(
+            upper, pitch, locked)
+        self.assertFalse(locked)
+        self.assertGreater(observability, 0.65)
+        self.assertAlmostEqual(pitch, -0.3, places=9)
 
     def test_shoulder_yaw_holds_previous_value_near_full_extension(self):
         pitch, roll, yaw = -0.4, 0.3, 1.0

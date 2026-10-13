@@ -8,7 +8,7 @@ Legacy functional-centre helpers remain available for older calibration files.
 
 from dataclasses import dataclass
 import math
-from typing import Tuple
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -877,7 +877,9 @@ def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
                                      previous_wrist: float = 0.0,
                                      previous_pitch: float = 0.0,
                                      min_pitch_observability: float = 0.2,
-                                     min_yaw_observability: float = 0.55) -> np.ndarray:
+                                     min_yaw_observability: float = 0.55,
+                                     pitch_override: Optional[float] = None,
+                                     ) -> np.ndarray:
     """Map two segment directions and forearm twist to five arm angles."""
     alignment = np.asarray(rotation_tx_to_body, dtype=float)
     upper_aligned = alignment @ np.asarray(upper_sensor_rotation_tx, dtype=float)
@@ -894,6 +896,7 @@ def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
         previous_pitch=previous_pitch,
         min_pitch_observability=min_pitch_observability,
         min_yaw_observability=min_yaw_observability,
+        pitch_override=pitch_override,
     )
 
 
@@ -906,7 +909,8 @@ def dual_joint_angles_from_segment_vectors(
         previous_wrist: float = 0.0,
         min_yaw_observability: float = 0.55,
         previous_pitch: float = 0.0,
-        min_pitch_observability: float = 0.2) -> np.ndarray:
+        min_pitch_observability: float = 0.2,
+        pitch_override: Optional[float] = None) -> np.ndarray:
     """Map body-frame segment directions and forearm attitude to joints."""
     upper_direction = np.asarray(upper_direction_body, dtype=float).copy()
     forearm_direction = np.asarray(forearm_direction_body, dtype=float).copy()
@@ -918,10 +922,12 @@ def dual_joint_angles_from_segment_vectors(
     upper_direction /= np.linalg.norm(upper_direction)
     forearm_direction /= np.linalg.norm(forearm_direction)
 
-    pitch, roll = shoulder_pitch_roll(
+    measured_pitch, roll = shoulder_pitch_roll(
         upper_direction,
         fallback_pitch=previous_pitch,
         min_horizontal=min_pitch_observability)
+    pitch = (measured_pitch if pitch_override is None
+             else float(pitch_override))
     yaw, yaw_observable = shoulder_yaw(
         upper_direction, forearm_direction, pitch, roll,
         fallback=previous_yaw,

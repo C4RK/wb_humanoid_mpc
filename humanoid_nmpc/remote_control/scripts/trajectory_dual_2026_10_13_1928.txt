@@ -1,0 +1,39 @@
+root@kw:/wb_humanoid_mpc_ws# ros2 run remote_control dual_retargeting_node
+[INFO] [1791919748.948201575] [dual_retargeting_node]: Loaded dual calibration: mode=dual_receiver_hybrid, rotation=as_reported, reference max=22.6 deg, dry_run_only=True
+[INFO] [1791919748.956716888] [dual_retargeting_node]: Dual retargeting ready. Hold the calibration reference pose before starting MPC. Joint-target publishing is DISABLED (dry run).
+[INFO] [1791919749.043267655] [dual_retargeting_node]: pitch=-1.0 roll=-2.0 yaw=+0.0 elbow=+2.9 wrist=+0.0 deg; upper radius error=3 mm
+[INFO] [1791919750.054863313] [dual_retargeting_node]: pitch=-3.7 roll=-5.3 yaw=+0.0 elbow=+85.3 wrist=+0.0 deg; upper radius error=2 mm
+[INFO] [1791919751.072621003] [dual_retargeting_node]: pitch=-2.9 roll=-3.4 yaw=+0.0 elbow=+85.9 wrist=+0.0 deg; upper radius error=1 mm
+[INFO] [1791919752.074089401] [dual_retargeting_node]: pitch=-0.4 roll=-0.9 yaw=+0.0 elbow=+84.9 wrist=+0.0 deg; upper radius error=2 mm
+[INFO] [1791919753.074681222] [dual_retargeting_node]: pitch=-0.3 roll=-0.9 yaw=+0.0 elbow=+84.5 wrist=+0.0 deg; upper radius error=2 mm
+[INFO] [1791919754.094112243] [dual_retargeting_node]: pitch=-0.6 roll=-1.3 yaw=+0.0 elbow=+84.9 wrist=+0.0 deg; upper radius error=2 mm
+[INFO] [1791919755.094268808] [dual_retargeting_node]: pitch=-10.4 roll=-7.2 yaw=+0.0 elbow=+85.8 wrist=+0.0 deg; upper radius error=1 mm
+[INFO] [1791919756.114121156] [dual_retargeting_node]: pitch=-44.2 roll=-17.4 yaw=+0.0 elbow=+64.8 wrist=+0.0 deg; upper radius error=4 mm
+[INFO] [1791919757.114545674] [dual_retargeting_node]: pitch=-87.2 roll=-14.1 yaw=+105.9 elbow=+45.7 wrist=-105.8 deg; upper radius error=18 mm
+[INFO] [1791919758.134387498] [dual_retargeting_node]: pitch=-110.7 roll=-7.0 yaw=+149.1 elbow=+44.2 wrist=-113.0 deg; upper radius error=34 mm
+[INFO] [1791919759.153528601] [dual_retargeting_node]: pitch=-113.2 roll=-5.5 yaw=+147.4 elbow=+44.9 wrist=-113.0 deg; upper radius error=34 mm
+[INFO] [1791919760.154499475] [dual_retargeting_node]: pitch=-113.9 roll=-5.0 yaw=+147.6 elbow=+45.1 wrist=-113.0 deg; upper radius error=33 mm
+[INFO] [1791919761.154523507] [dual_retargeting_node]: pitch=-98.7 roll=-9.9 yaw=+146.9 elbow=+44.7 wrist=-113.0 deg; upper radius error=19 mm
+[INFO] [1791919762.174320351] [dual_retargeting_node]: pitch=-54.7 roll=-15.8 yaw=+141.5 elbow=+60.8 wrist=-113.0 deg; upper radius error=1 mm
+[INFO] [1791919763.193466340] [dual_retargeting_node]: pitch=-16.1 roll=-5.3 yaw=+141.5 elbow=+82.5 wrist=-113.0 deg; upper radius error=2 mm
+[INFO] [1791919764.194133569] [dual_retargeting_node]: pitch=-7.9 roll=-4.6 yaw=+141.5 elbow=+87.1 wrist=-113.0 deg; upper radius error=3 mm
+[INFO] [1791919765.214184423] [dual_retargeting_node]: pitch=-7.3 roll=-2.8 yaw=+141.5 elbow=+87.3 wrist=-113.0 deg; upper radius error=1 mm
+[INFO] [1791919766.215169384] [dual_retargeting_node]: pitch=-35.8 roll=+57.9 yaw=+141.5 elbow=+67.0 wrist=-113.0 deg; upper radius error=10 mm
+[INFO] [1791919767.235036168] [dual_retargeting_node]: pitch=-167.5 roll=+68.8 yaw=+141.5 elbow=+68.7 wrist=-113.0 deg; upper radius error=26 mm
+[INFO] [1791919768.253960315] [dual_retargeting_node]: pitch=-167.9 roll=+68.5 yaw=+141.5 elbow=+68.7 wrist=-113.0 deg; upper radius error=25 mm
+[INFO] [1791919769.274202833] [dual_retargeting_node]: pitch=-143.1 roll=+81.1 yaw=+141.5 elbow=+68.6 wrist=-113.0 deg; upper radius error=1 mm
+[INFO] [1791919770.274264698] [dual_retargeting_node]: pitch=-19.8 roll=+33.1 yaw=+141.5 elbow=+79.3 wrist=-113.0 deg; upper radius error=15 mm
+[INFO] [1791919771.274525394] [dual_retargeting_node]: pitch=+8.5 roll=+3.5 yaw=+141.5 elbow=+69.1 wrist=-113.0 deg; upper radius error=2 mm
+[INFO] [1791919772.294071619] [dual_retargeting_node]: pitch=+7.5 roll=+2.4 yaw=+141.5 elbow=+70.6 wrist=-113.0 deg; upper radius error=1 mm
+[INFO] [1791919773.294176076] [dual_retargeting_node]: pitch=-26.5 roll=-0.6 yaw=+141.5 elbow=+81.5 wrist=-113.0 deg; upper radius error=16 mm
+[INFO] [1791919774.294428946] [dual_retargeting_node]: pitch=-86.8 roll=-13.5 yaw=+150.0 elbow=+47.6 wrist=-64.3 deg; upper radius error=8 mm
+[INFO] [1791919775.294431912] [dual_retargeting_node]: pitch=-95.9 roll=-14.4 yaw=+150.0 elbow=+37.5 wrist=-21.3 deg; upper radius error=14 mm
+[INFO] [1791919776.314159343] [dual_retargeting_node]: pitch=-83.5 roll=-12.6 yaw=+150.0 elbow=+64.1 wrist=-43.1 deg; upper radius error=8 mm
+[INFO] [1791919777.333929651] [dual_retargeting_node]: pitch=-13.9 roll=-1.1 yaw=+150.0 elbow=+83.8 wrist=-43.3 deg; upper radius error=7 mm
+[INFO] [1791919778.334138522] [dual_retargeting_node]: pitch=-4.2 roll=-0.9 yaw=+150.0 elbow=+78.2 wrist=-43.3 deg; upper radius error=9 mm
+[INFO] [1791919779.353765814] [dual_retargeting_node]: pitch=-29.2 roll=-3.8 yaw=+150.0 elbow=+59.1 wrist=-43.3 deg; upper radius error=4 mm
+[INFO] [1791919780.373701769] [dual_retargeting_node]: pitch=-77.1 roll=-10.7 yaw=+150.0 elbow=+12.5 wrist=+23.5 deg; upper radius error=2 mm
+[INFO] [1791919781.374609629] [dual_retargeting_node]: pitch=-80.3 roll=-11.2 yaw=+150.0 elbow=+1.5 wrist=+24.7 deg; upper radius error=1 mm
+[INFO] [1791919782.394370207] [dual_retargeting_node]: pitch=-60.7 roll=-15.8 yaw=+150.0 elbow=+53.4 wrist=+36.0 deg; upper radius error=3 mm
+[INFO] [1791919783.414153347] [dual_retargeting_node]: pitch=-2.6 roll=+4.2 yaw=+150.0 elbow=+75.2 wrist=+38.6 deg; upper radius error=7 mm
+[INFO] [1791919784.434235938] [dual_retargeting_node]: pitch=-4.9 roll=-2.8 yaw=+150.0 elbow=+78.5 wrist=+38.6 deg; upper radius error=8 mm

@@ -2,7 +2,9 @@
 
 """Retarget synchronized upper-arm and forearm WEMT poses to the G1 arm."""
 
+from datetime import datetime, timezone
 import math
+import os
 import time
 
 import numpy as np
@@ -12,7 +14,10 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
 
-from remote_control.dual_calibration_node import load_dual_calibration
+from remote_control.dual_calibration_node import (
+    CALIBRATION_LOG_DIR,
+    load_dual_calibration,
+)
 from remote_control.dual_retargeting_kinematics import (
     ROTATION_AS_REPORTED,
     apply_rotation_convention,
@@ -21,6 +26,7 @@ from remote_control.dual_retargeting_kinematics import (
     dual_joint_angles_from_segment_vectors,
 )
 from remote_control.retargeting_kinematics import quaternion_to_matrix
+from remote_control.retargeting_kinematics import shoulder_pitch_roll_continuous
 from remote_control.retargeting_node import (
     DEFAULT_JOINT_STATE,
     JOINT_LIMITS,
@@ -48,6 +54,12 @@ def _message_pose(msg: PoseStamped):
         [msg.pose.orientation.w, msg.pose.orientation.x,
          msg.pose.orientation.y, msg.pose.orientation.z], dtype=float)
     return position, quaternion_to_matrix(quaternion)
+
+
+def _message_quaternion(msg: PoseStamped):
+    return np.array(
+        [msg.pose.orientation.w, msg.pose.orientation.x,
+         msg.pose.orientation.y, msg.pose.orientation.z], dtype=float)
 
 
 class DualRetargetingNode(Node):
@@ -105,11 +117,16 @@ class DualRetargetingNode(Node):
         # in this elbow-angle convention) so measurement noise is not turned
         # into a yaw/wrist excursion during elbow extension.
         self.declare_parameter('min_yaw_observability', 0.55)
-        # Pitch is undefined at shoulder roll +/-90 degrees. Preserve the
-        # previous pitch when the upper arm is within about 11.5 degrees of
-        # that sideways singularity (horizontal projection below 0.2).
-        self.declare_parameter('min_pitch_observability', 0.2)
+        # Pitch is undefined at shoulder roll +/-90 degrees.  Enter a protected
+        # state before the direction becomes ill-conditioned, then require a
+        # larger X/Z projection before reacquiring pitch.  This hysteresis keeps
+        # position noise from selecting a different shoulder solution during a
+        # side raise.
+        self.declare_parameter('min_pitch_observability', 0.5)
+        self.declare_parameter('pitch_reacquire_observability', 0.65)
         self.declare_parameter('publish_joint_targets', False)
+        self.declare_parameter('record_diagnostics', True)
+        self.declare_parameter('diagnostic_log_dir', CALIBRATION_LOG_DIR)
         self.filter_tau = max(0.0, float(self.get_parameter('filter_time_constant_s').value))
         self.max_speed = max(0.1, float(self.get_parameter('max_joint_speed_rad_s').value))
         self.max_shoulder_drift = max(0.0, float(self.get_parameter('max_shoulder_drift_m').value))
@@ -120,9 +137,16 @@ class DualRetargetingNode(Node):
         self.min_yaw_observability = float(np.clip(
             self.get_parameter('min_yaw_observability').value, 0.05, 0.95))
         self.min_pitch_observability = float(np.clip(
-            self.get_parameter('min_pitch_observability').value, 0.01, 0.5))
+            self.get_parameter('min_pitch_observability').value, 0.05, 0.85))
+        self.pitch_reacquire_observability = float(np.clip(
+            self.get_parameter('pitch_reacquire_observability').value,
+            self.min_pitch_observability + 0.05, 0.99))
         self.publish_joint_targets = bool(
             self.get_parameter('publish_joint_targets').value)
+        self.record_diagnostics = bool(
+            self.get_parameter('record_diagnostics').value)
+        self.diagnostic_log_dir = str(
+            self.get_parameter('diagnostic_log_dir').value)
         if self.calibration_dry_run_only and self.publish_joint_targets:
             raise ValueError(
                 'This calibration is marked dry-run-only because its forearm '
@@ -142,8 +166,13 @@ class DualRetargetingNode(Node):
         self._joint_state = list(DEFAULT_JOINT_STATE)
         self._raw_angles = np.zeros(5)
         self._filtered_angles = np.zeros(5)
+        self._pitch_singularity_locked = False
+        self._pitch_observability = 1.0
         self._last_stamp_ns = None
         self._last_pair_wall = None
+        self._diagnostic_records = []
+        self._diagnostic_saved = False
+        self._diagnostic_started_at = datetime.now(timezone.utc)
 
         self.create_subscription(
             PoseStamped, '/em/upper_arm_pose', self._on_upper_pose, 20)
@@ -155,6 +184,27 @@ class DualRetargetingNode(Node):
             'Dual retargeting ready. Hold the calibration reference pose before '
             'starting MPC. Joint-target publishing is '
             f'{"ENABLED" if self.publish_joint_targets else "DISABLED (dry run)"}.')
+        if self.record_diagnostics:
+            self.get_logger().info(
+                'Full-rate diagnostic recording is ENABLED. Press Ctrl+C to '
+                f'save an NPZ file in {self.diagnostic_log_dir}.')
+
+    def _resolve_continuous_pitch(self, upper_direction):
+        was_locked = self._pitch_singularity_locked
+        pitch, _, locked, observability = shoulder_pitch_roll_continuous(
+            upper_direction,
+            previous_pitch=float(self._raw_angles[0]),
+            pitch_locked=was_locked,
+            lock_below=self.min_pitch_observability,
+            release_above=self.pitch_reacquire_observability)
+        self._pitch_singularity_locked = locked
+        self._pitch_observability = observability
+        if locked != was_locked:
+            action = 'holding' if locked else 'reacquiring'
+            self.get_logger().info(
+                f'Shoulder pitch is {action} a continuous solution '
+                f'(observability={observability:.2f}).')
+        return pitch
 
     @staticmethod
     def _vector(calibration, key):
@@ -205,12 +255,16 @@ class DualRetargetingNode(Node):
             return
         p_u, R_u = _message_pose(upper_msg)
         p_f, R_f = _message_pose(forearm_msg)
+        q_u_reported = _message_quaternion(upper_msg)
+        q_f_reported = _message_quaternion(forearm_msg)
         R_u = apply_rotation_convention(R_u, self.rotation_convention)
         R_f = apply_rotation_convention(R_f, self.rotation_convention)
 
         shoulder_drift = None
         elbow_mismatch = None
         upper_radius_error = None
+        upper_direction = np.full(3, np.nan)
+        forearm_direction = np.full(3, np.nan)
         if self.use_functional_centres:
             shoulder_now = p_u + R_u @ self.upper_to_shoulder
             elbow_from_upper = p_u + R_u @ self.upper_to_elbow
@@ -249,26 +303,32 @@ class DualRetargetingNode(Node):
             upper_direction = self.upper_position_align @ upper_offset
             forearm_aligned = self.forearm_align @ R_f
             forearm_direction = forearm_aligned @ self.forearm_axis_local
+            continuous_pitch = self._resolve_continuous_pitch(upper_direction)
             raw = dual_joint_angles_from_segment_vectors(
                 upper_direction,
                 forearm_direction,
                 forearm_aligned,
                 self.forearm_mount,
-                previous_pitch=float(self._raw_angles[0]),
+                previous_pitch=continuous_pitch,
                 previous_yaw=float(self._raw_angles[2]),
                 previous_wrist=float(self._raw_angles[4]),
                 min_pitch_observability=self.min_pitch_observability,
-                min_yaw_observability=self.min_yaw_observability)
+                min_yaw_observability=self.min_yaw_observability,
+                pitch_override=continuous_pitch)
         elif self.use_segment_directions:
+            upper_aligned = self.R_align @ R_u
+            upper_direction = upper_aligned @ self.upper_axis_local
+            continuous_pitch = self._resolve_continuous_pitch(upper_direction)
             raw = dual_joint_angles_from_directions(
                 R_u, R_f, self.R_align,
                 self.upper_axis_local, self.forearm_axis_local,
                 self.forearm_mount,
-                previous_pitch=float(self._raw_angles[0]),
+                previous_pitch=continuous_pitch,
                 previous_yaw=float(self._raw_angles[2]),
                 previous_wrist=float(self._raw_angles[4]),
                 min_pitch_observability=self.min_pitch_observability,
-                min_yaw_observability=self.min_yaw_observability)
+                min_yaw_observability=self.min_yaw_observability,
+                pitch_override=continuous_pitch)
         else:
             raw = dual_joint_angles(
                 R_u, R_f, self.R_align, self.upper_mount, self.forearm_mount,
@@ -303,6 +363,48 @@ class DualRetargetingNode(Node):
         for value, index in zip(commanded, LEFT_ARM_INDICES):
             self._joint_state[index] = value
 
+        if self.record_diagnostics:
+            upper_norm = float(np.linalg.norm(upper_direction))
+            forearm_norm = float(np.linalg.norm(forearm_direction))
+            if upper_norm > 1e-9 and forearm_norm > 1e-9:
+                upper_unit = upper_direction / upper_norm
+                forearm_unit = forearm_direction / forearm_norm
+                pitch_observability = math.hypot(
+                    float(upper_unit[0]), float(upper_unit[2]))
+                forearm_perpendicular = (
+                    forearm_unit
+                    - float(np.dot(forearm_unit, upper_unit)) * upper_unit)
+                yaw_observability = float(np.linalg.norm(forearm_perpendicular))
+            else:
+                upper_unit = np.full(3, np.nan)
+                forearm_unit = np.full(3, np.nan)
+                pitch_observability = float('nan')
+                yaw_observability = float('nan')
+            self._diagnostic_records.append({
+                'stamp_ns': int(stamp_ns),
+                'upper_position_m': p_u.copy(),
+                'upper_quaternion_wxyz': q_u_reported.copy(),
+                'forearm_position_m': p_f.copy(),
+                'forearm_quaternion_wxyz': q_f_reported.copy(),
+                'upper_direction_body': upper_unit,
+                'forearm_direction_body': forearm_unit,
+                'raw_joint_angles_rad': np.asarray(raw, dtype=float).copy(),
+                'commanded_joint_angles_rad': np.asarray(commanded, dtype=float),
+                'pitch_observability': pitch_observability,
+                'pitch_singularity_locked': bool(
+                    self._pitch_singularity_locked),
+                'yaw_observability': yaw_observability,
+                'upper_radius_error_m': (
+                    float(upper_radius_error)
+                    if upper_radius_error is not None else float('nan')),
+                'shoulder_drift_m': (
+                    float(shoulder_drift)
+                    if shoulder_drift is not None else float('nan')),
+                'elbow_mismatch_m': (
+                    float(elbow_mismatch)
+                    if elbow_mismatch is not None else float('nan')),
+            })
+
         output = JointState()
         output.header.stamp = upper_msg.header.stamp
         output.position = list(self._joint_state)
@@ -334,6 +436,44 @@ class DualRetargetingNode(Node):
             self.get_logger().warn(
                 f'No valid receiver pair for {age:.2f} s; {action}.',
                 throttle_duration_sec=1.0)
+
+    def _save_diagnostics(self):
+        if (self._diagnostic_saved or not self.record_diagnostics or
+                not self._diagnostic_records):
+            return None
+        os.makedirs(self.diagnostic_log_dir, exist_ok=True)
+        timestamp = self._diagnostic_started_at.strftime('%Y%m%dT%H%M%SZ')
+        path = os.path.join(
+            self.diagnostic_log_dir,
+            f'dual_retargeting_{timestamp}.npz')
+        keys = tuple(self._diagnostic_records[0].keys())
+        arrays = {
+            key: np.asarray([record[key] for record in self._diagnostic_records])
+            for key in keys
+        }
+        arrays.update({
+            'joint_names': np.asarray(ARM_JOINT_KEYS),
+            'calibration_mode': np.asarray(self.calibration_mode),
+            'rotation_convention': np.asarray(self.rotation_convention),
+            'calibration_dry_run_only': np.asarray(
+                self.calibration_dry_run_only),
+            'min_pitch_observability': np.asarray(
+                self.min_pitch_observability),
+            'pitch_reacquire_observability': np.asarray(
+                self.pitch_reacquire_observability),
+            'min_yaw_observability': np.asarray(
+                self.min_yaw_observability),
+        })
+        np.savez_compressed(path, **arrays)
+        self._diagnostic_saved = True
+        self.get_logger().info(
+            f'Saved {len(self._diagnostic_records)} full-rate diagnostic '
+            f'frames to {path}')
+        return path
+
+    def destroy_node(self):
+        self._save_diagnostics()
+        return super().destroy_node()
 
 
 def main(args=None):

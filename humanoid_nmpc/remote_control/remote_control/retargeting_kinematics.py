@@ -72,10 +72,62 @@ def shoulder_pitch_roll(upper_arm_direction: np.ndarray,
     u = u / norm
 
     horizontal = math.hypot(float(u[0]), float(u[2]))
-    pitch = (float(fallback_pitch) if horizontal < float(min_horizontal)
-             else math.atan2(-float(u[0]), -float(u[2])))
+    if horizontal < float(min_horizontal):
+        pitch = float(fallback_pitch)
+    else:
+        # atan2 returns one representative in [-pi, pi].  Pick the equivalent
+        # angle nearest the previous solution so crossing the branch cut does
+        # not create a full-turn jump in the commanded shoulder joint.
+        pitch = unwrap_near(
+            math.atan2(-float(u[0]), -float(u[2])),
+            float(fallback_pitch))
     roll = math.asin(float(np.clip(u[1], -1.0, 1.0)))
     return pitch, roll
+
+
+def shoulder_pitch_roll_continuous(
+        upper_arm_direction: np.ndarray,
+        previous_pitch: float = 0.0,
+        pitch_locked: bool = False,
+        lock_below: float = 0.5,
+        release_above: float = 0.65,
+        ) -> Tuple[float, float, bool, float]:
+    """Resolve pitch continuously through the sideways-arm singularity.
+
+    The upper-arm direction determines pitch poorly as shoulder roll approaches
+    +/-90 degrees: its X/Z projection tends to zero, so millimetres of position
+    noise can rotate the computed pitch by more than 100 degrees.  A hysteresis
+    band freezes pitch before that happens and only reacquires it after the arm
+    has moved far enough away from the singularity.  ``pitch_locked`` is the
+    state returned by the preceding call.
+
+    ``lock_below=0.5`` enters the protected region at about 60 degrees of
+    shoulder roll.  ``release_above=0.65`` leaves it below about 49 degrees,
+    preventing measurement noise near the boundary from repeatedly switching
+    between the two modes.
+    """
+    if not 0.0 <= float(lock_below) < float(release_above) <= 1.0:
+        raise ValueError(
+            'pitch observability thresholds must satisfy '
+            '0 <= lock_below < release_above <= 1')
+
+    u = np.asarray(upper_arm_direction, dtype=float)
+    norm = float(np.linalg.norm(u))
+    if norm < 1e-9:
+        raise ValueError('upper-arm direction is zero')
+    u = u / norm
+    observability = math.hypot(float(u[0]), float(u[2]))
+
+    if pitch_locked:
+        locked = observability < float(release_above)
+    else:
+        locked = observability <= float(lock_below)
+
+    pitch, roll = shoulder_pitch_roll(
+        u,
+        fallback_pitch=previous_pitch,
+        min_horizontal=(float('inf') if locked else 0.0))
+    return pitch, roll, locked, observability
 
 
 def shoulder_yaw(upper_arm_direction: np.ndarray,
