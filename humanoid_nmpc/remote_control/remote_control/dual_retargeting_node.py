@@ -113,10 +113,13 @@ class DualRetargetingNode(Node):
         self.declare_parameter('watchdog_timeout_s', 0.25)
         # Shoulder axial rotation and forearm twist become poorly conditioned
         # before the arm is completely straight.  Freeze both once the
-        # perpendicular forearm component falls below 0.55 (about 57 degrees
+        # perpendicular forearm component falls below 0.90 (about 26 degrees
         # in this elbow-angle convention) so measurement noise is not turned
-        # into a yaw/wrist excursion during elbow extension.
-        self.declare_parameter('min_yaw_observability', 0.55)
+        # into a yaw/wrist excursion during elbow extension.  Recorded
+        # straightening trials showed that 0.55 locks only after the estimate
+        # has drifted by about 40 degrees; 0.90 holds the last reliable axial
+        # angles before that amplification begins.
+        self.declare_parameter('min_yaw_observability', 0.90)
         # Pitch is undefined at shoulder roll +/-90 degrees.  Enter a protected
         # state before the direction becomes ill-conditioned, then require a
         # larger X/Z projection before reacquiring pitch.  This hysteresis keeps
