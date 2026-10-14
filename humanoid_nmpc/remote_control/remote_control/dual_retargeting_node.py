@@ -128,6 +128,7 @@ class DualRetargetingNode(Node):
         self.declare_parameter('min_pitch_observability', 0.5)
         self.declare_parameter('pitch_reacquire_observability', 0.65)
         self.declare_parameter('publish_joint_targets', False)
+        self.declare_parameter('simulation_only', False)
         self.declare_parameter('record_diagnostics', True)
         self.declare_parameter('diagnostic_log_dir', CALIBRATION_LOG_DIR)
         self.filter_tau = max(0.0, float(self.get_parameter('filter_time_constant_s').value))
@@ -146,15 +147,19 @@ class DualRetargetingNode(Node):
             self.min_pitch_observability + 0.05, 0.99))
         self.publish_joint_targets = bool(
             self.get_parameter('publish_joint_targets').value)
+        self.simulation_only = bool(
+            self.get_parameter('simulation_only').value)
         self.record_diagnostics = bool(
             self.get_parameter('record_diagnostics').value)
         self.diagnostic_log_dir = str(
             self.get_parameter('diagnostic_log_dir').value)
-        if self.calibration_dry_run_only and self.publish_joint_targets:
+        if (self.calibration_dry_run_only and self.publish_joint_targets and
+                not self.simulation_only):
             raise ValueError(
                 'This calibration is marked dry-run-only because its forearm '
                 'reference error exceeded 15 degrees. Recalibrate before '
-                'publishing robot joint targets.')
+                'publishing robot joint targets, or set simulation_only:=true '
+                'to publish solely on /arm_joint_target_sim for MuJoCo.')
 
         quality = calibration.get('quality', {})
         self.get_logger().info(
@@ -181,12 +186,20 @@ class DualRetargetingNode(Node):
             PoseStamped, '/em/upper_arm_pose', self._on_upper_pose, 20)
         self.create_subscription(
             PoseStamped, '/em/forearm_pose', self._on_forearm_pose, 20)
-        self._publisher = self.create_publisher(JointState, '/arm_joint_target', 10)
+        self._target_topic = (
+            '/arm_joint_target_sim' if self.simulation_only
+            else '/arm_joint_target')
+        self._publisher = self.create_publisher(
+            JointState, self._target_topic, 10)
         self._watchdog_timer = self.create_timer(0.1, self._watchdog)
+        publish_state = (
+            f'ENABLED on {self._target_topic}'
+            if self.publish_joint_targets else 'DISABLED (dry run)')
+        if self.publish_joint_targets and self.simulation_only:
+            publish_state += ' (simulation only)'
         self.get_logger().info(
             'Dual retargeting ready. Hold the calibration reference pose before '
-            'starting MPC. Joint-target publishing is '
-            f'{"ENABLED" if self.publish_joint_targets else "DISABLED (dry run)"}.')
+            f'starting MPC. Joint-target publishing is {publish_state}.')
         if self.record_diagnostics:
             self.get_logger().info(
                 'Full-rate diagnostic recording is ENABLED. Press Ctrl+C to '

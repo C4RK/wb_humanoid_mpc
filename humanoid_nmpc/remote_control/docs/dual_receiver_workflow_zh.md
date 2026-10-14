@@ -233,15 +233,28 @@ ros2 run remote_control dual_retargeting_node --ros-args \
   -p publish_joint_targets:=false
 ```
 
-`publish_joint_targets` 默认就是 `false`。完成 dry-run 验证、准备连接 MPC 时，
-必须显式使用 `-p publish_joint_targets:=true`。
+`publish_joint_targets` 默认就是 `false`。完成 dry-run 验证、准备连接 MPC/MuJoCo 时，
+必须显式开启仿真专用发布：
+
+```bash
+ros2 run remote_control dual_retargeting_node --ros-args \
+  -p publish_joint_targets:=true \
+  -p simulation_only:=true
+```
+
+该模式只发布 `/arm_joint_target_sim`，`g1_centroidal_mpc` 的 MuJoCo 仿真会订阅
+这个话题。即使当前标定因前臂参考误差略高于 15°而标记为 `dry_run_only`，也可以显式
+使用该模式做仿真观察。
+
+`simulation_only:=false` 时发布的是 `/arm_joint_target`。该话题保留给后续实机链路，
+并且 `dry_run_only` 标定仍会被严格拒绝。
 
 先不启动 MPC，在终端检查五个角度。动作与符号通过后，重新使用默认发布模式启动节点，
 再检查目标话题：
 
 ```bash
-ros2 topic echo /arm_joint_target --once
-ros2 topic hz /arm_joint_target
+ros2 topic echo /arm_joint_target_sim --once
+ros2 topic hz /arm_joint_target_sim
 ```
 
 启动 MuJoCo：
@@ -250,7 +263,7 @@ ros2 topic hz /arm_joint_target
 ros2 launch g1_centroidal_mpc mujoco_sim.launch.py
 ```
 
-启动顺序建议为：采集节点、重定向节点、MuJoCo/MPC。启动 MPC 前保持机器人零位对应姿态：左上臂自然下垂、肘弯 90°、前臂水平向前、左掌朝向身体内侧、拇指向上。此时五个目标关节角应接近零，可以减小初始目标跳变。
+启动顺序建议为：采集节点、MuJoCo/MPC、仿真专用重定向节点。等 MuJoCo 中机器人稳定站立后，保持人体零位对应姿态再启动重定向：左上臂自然下垂、肘弯 90°、前臂水平向前、左掌朝向身体内侧、拇指向上。此时五个目标关节角应接近零，可以减小初始目标跳变。
 
 实时节点包含：
 

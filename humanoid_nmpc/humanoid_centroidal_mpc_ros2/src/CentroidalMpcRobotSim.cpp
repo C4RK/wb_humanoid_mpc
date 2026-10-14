@@ -101,15 +101,12 @@ int main(int argc, char** argv) {
   // Receives the full MPC joint state from retargeting_node and forwards it to MPC.
   // rclcpp::spin_some(nodeHandle) in the main loop processes this at 500 Hz.
   const auto expectedJointDim = interface.getMpcRobotModel().getJointDim();
-  auto emArmSub = nodeHandle->create_subscription<sensor_msgs::msg::JointState>(
-      "/arm_joint_target",
-      rclcpp::QoS(1).best_effort(),
-      [&mpcTargetTrajectoriesCalculator, expectedJointDim, nodeHandle](
-          const sensor_msgs::msg::JointState::SharedPtr msg) {
+  auto armTargetCallback = [&mpcTargetTrajectoriesCalculator, expectedJointDim, nodeHandle](
+                               const sensor_msgs::msg::JointState::SharedPtr msg) {
         if (msg->position.size() != expectedJointDim) {
           RCLCPP_WARN_THROTTLE(
               nodeHandle->get_logger(), *nodeHandle->get_clock(), 2000,
-              "Ignoring /arm_joint_target: got %zu positions, expected %zu.",
+              "Ignoring arm joint target: got %zu positions, expected %zu.",
               msg->position.size(), expectedJointDim);
           return;
         }
@@ -118,8 +115,13 @@ int main(int argc, char** argv) {
           q[i] = msg->position[i];
         }
         mpcTargetTrajectoriesCalculator.setTargetJointState(q);
-      });
+      };
+  auto emArmSub = nodeHandle->create_subscription<sensor_msgs::msg::JointState>(
+      "/arm_joint_target", rclcpp::QoS(1).best_effort(), armTargetCallback);
+  auto emArmSimSub = nodeHandle->create_subscription<sensor_msgs::msg::JointState>(
+      "/arm_joint_target_sim", rclcpp::QoS(1).best_effort(), armTargetCallback);
   std::cout << "EM arm tracking subscriber ready on /arm_joint_target" << std::endl;
+  std::cout << "Simulation-only arm tracking subscriber ready on /arm_joint_target_sim" << std::endl;
 
   //将参考管理器和运动管理器注入到MPC求解器的内部。
   //确保求解器在计算每一步时，知道最新的步态和目标速度
@@ -190,7 +192,15 @@ int main(int argc, char** argv) {
 
 
   //实时闭环控制主循环
+  // Report deadline misses as a periodic summary.  Per-iteration stderr
+  // output adds avoidable load and can obscure more important MPC messages.
+  auto timingWindowStart = std::chrono::steady_clock::now();
+  size_t timingIterations = 0;
+  size_t timingOverruns = 0;
+  int64_t totalOverrunMicroSeconds = 0;
+  int64_t maxOverrunMicroSeconds = 0;
   while (true) {
+    ++timingIterations;
     //进入实机/仿真运行的绝对死循环。
     //第一步：根据当前的绝对系统时间，加上刚刚算好的 2000 微秒，设定好下一次循环必须开始的精确目标时间。
     auto targetTimeForNextIteration = std::chrono::steady_clock::now() + std::chrono::microseconds(mrtDeltaTMicroSeconds_);
@@ -212,11 +222,29 @@ int main(int argc, char** argv) {
     auto currentTime = std::chrono::steady_clock::now();
     if (currentTime > targetTimeForNextIteration) {
       auto delay = std::chrono::duration_cast<std::chrono::microseconds>(currentTime - targetTimeForNextIteration).count();
-
-      std::cerr << "Warning: MRT loop running slow by " << delay << " microseconds." << std::endl;
+      ++timingOverruns;
+      totalOverrunMicroSeconds += delay;
+      if (delay > maxOverrunMicroSeconds) {
+        maxOverrunMicroSeconds = delay;
+      }
     } else {
       // Sleep in case sim loop is faster than specified
       std::this_thread::sleep_until(targetTimeForNextIteration);
+    }
+
+    const auto reportTime = std::chrono::steady_clock::now();
+    if (reportTime - timingWindowStart >= std::chrono::seconds(5)) {
+      if (timingOverruns > 0) {
+        std::cerr << "Warning: MRT timing summary: " << timingOverruns << "/" << timingIterations
+                  << " iterations exceeded the " << mrtDeltaTMicroSeconds_ << " us period; average overrun "
+                  << totalOverrunMicroSeconds / static_cast<int64_t>(timingOverruns) << " us, maximum "
+                  << maxOverrunMicroSeconds << " us." << std::endl;
+      }
+      timingWindowStart = reportTime;
+      timingIterations = 0;
+      timingOverruns = 0;
+      totalOverrunMicroSeconds = 0;
+      maxOverrunMicroSeconds = 0;
     }
   }
 

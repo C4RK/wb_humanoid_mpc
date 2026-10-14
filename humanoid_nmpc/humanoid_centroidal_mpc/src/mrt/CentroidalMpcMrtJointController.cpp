@@ -241,7 +241,17 @@ void CentroidalMpcMrtJointController::solverWorker() {
   mcpMrtInterface_.resetMpcNode(currentObservationToResetTrajectory(mcpMrtInterface_.getCurrentObservation()));
   std::cerr << "MPC is reset. NMPC solver started!" << std::endl;
 
+  // Printing on every missed deadline can itself make the solver slower and
+  // renders the useful diagnostics unreadable.  Keep the timing information,
+  // but aggregate it into one report every five seconds.
+  auto timingWindowStart = std::chrono::steady_clock::now();
+  size_t timingIterations = 0;
+  size_t timingOverruns = 0;
+  int64_t totalOverrunMicroSeconds = 0;
+  int64_t maxOverrunMicroSeconds = 0;
+
   while (true) {
+    ++timingIterations;
     auto targetTimeForNextIteration = std::chrono::steady_clock::now() + std::chrono::microseconds(mpcDeltaTMicroSeconds_);
 
     mcpMrtInterface_.advanceMpc();
@@ -258,11 +268,29 @@ void CentroidalMpcMrtJointController::solverWorker() {
       auto currentTime = std::chrono::steady_clock::now();
       if (currentTime > targetTimeForNextIteration) {
         auto delay = std::chrono::duration_cast<std::chrono::microseconds>(currentTime - targetTimeForNextIteration).count();
-
-        std::cerr << "Warning: MPC loop running slow by " << delay << " microseconds." << std::endl;
+        ++timingOverruns;
+        totalOverrunMicroSeconds += delay;
+        if (delay > maxOverrunMicroSeconds) {
+          maxOverrunMicroSeconds = delay;
+        }
       } else {
         // Sleep in case sim loop is faster than specified
         std::this_thread::sleep_until(targetTimeForNextIteration);
+      }
+
+      const auto reportTime = std::chrono::steady_clock::now();
+      if (reportTime - timingWindowStart >= std::chrono::seconds(5)) {
+        if (timingOverruns > 0) {
+          std::cerr << "Warning: MPC timing summary: " << timingOverruns << "/" << timingIterations
+                    << " iterations exceeded the " << mpcDeltaTMicroSeconds_ << " us period; average overrun "
+                    << totalOverrunMicroSeconds / static_cast<int64_t>(timingOverruns) << " us, maximum "
+                    << maxOverrunMicroSeconds << " us." << std::endl;
+        }
+        timingWindowStart = reportTime;
+        timingIterations = 0;
+        timingOverruns = 0;
+        totalOverrunMicroSeconds = 0;
+        maxOverrunMicroSeconds = 0;
       }
     }
   }
