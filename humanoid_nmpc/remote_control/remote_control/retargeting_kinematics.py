@@ -91,15 +91,20 @@ def shoulder_pitch_roll_continuous(
         pitch_locked: bool = False,
         lock_below: float = 0.5,
         release_above: float = 0.65,
+        singular_pitch: float = 0.0,
         ) -> Tuple[float, float, bool, float]:
-    """Resolve pitch continuously through the sideways-arm singularity.
+    """Resolve pitch deterministically through the sideways-arm singularity.
 
     The upper-arm direction determines pitch poorly as shoulder roll approaches
     +/-90 degrees: its X/Z projection tends to zero, so millimetres of position
     noise can rotate the computed pitch by more than 100 degrees.  A hysteresis
-    band freezes pitch before that happens and only reacquires it after the arm
-    has moved far enough away from the singularity.  ``pitch_locked`` is the
-    state returned by the preceding call.
+    band selects ``singular_pitch`` before that happens and only reacquires the
+    measured pitch after the arm has moved far enough away from the
+    singularity.  Selecting one canonical solution is essential: holding the
+    preceding pitch makes the same side pose depend on whether it was reached
+    from a forward raise or a down pose.  The caller filters/rate-limits the
+    resulting joint target, so entering the canonical branch remains smooth.
+    ``pitch_locked`` is the state returned by the preceding call.
 
     ``lock_below=0.5`` enters the protected region at about 60 degrees of
     shoulder roll.  ``release_above=0.65`` leaves it below about 49 degrees,
@@ -123,10 +128,10 @@ def shoulder_pitch_roll_continuous(
     else:
         locked = observability <= float(lock_below)
 
-    pitch, roll = shoulder_pitch_roll(
-        u,
-        fallback_pitch=previous_pitch,
-        min_horizontal=(float('inf') if locked else 0.0))
+    measured_pitch, roll = shoulder_pitch_roll(
+        u, fallback_pitch=previous_pitch, min_horizontal=0.0)
+    pitch = (unwrap_near(float(singular_pitch), float(previous_pitch))
+             if locked else measured_pitch)
     return pitch, roll, locked, observability
 
 

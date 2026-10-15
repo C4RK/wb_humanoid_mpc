@@ -66,7 +66,7 @@ class RetargetingKinematicsTest(unittest.TestCase):
 
         self.assertAlmostEqual(actual_pitch, math.radians(181.0), places=9)
 
-    def test_shoulder_pitch_hysteresis_holds_until_direction_is_observable(self):
+    def test_shoulder_pitch_hysteresis_uses_canonical_side_solution(self):
         previous_pitch = 0.0
         locked = False
 
@@ -77,22 +77,23 @@ class RetargetingKinematicsTest(unittest.TestCase):
         self.assertGreater(observability, 0.65)
 
         # The measured direction contains a large apparent pitch near a side
-        # raise.  It must not replace the last well-conditioned solution.
+        # raise.  It must select the canonical side solution rather than keep
+        # a path-dependent preceding value.
         upper, _ = arm_directions(2.0, math.radians(70.0), 0.0, 0.0)
         pitch, _, locked, observability = shoulder_pitch_roll_continuous(
             upper, pitch, locked)
         self.assertTrue(locked)
         self.assertLess(observability, 0.5)
-        self.assertAlmostEqual(pitch, previous_pitch)
+        self.assertAlmostEqual(pitch, 0.0)
 
-        # Remaining inside the hysteresis band keeps the solution locked.
+        # Remaining inside the hysteresis band keeps the canonical solution.
         upper, _ = arm_directions(-1.7, math.radians(55.0), 0.0, 0.0)
         pitch, _, locked, observability = shoulder_pitch_roll_continuous(
             upper, pitch, locked)
         self.assertTrue(locked)
         self.assertGreater(observability, 0.5)
         self.assertLess(observability, 0.65)
-        self.assertAlmostEqual(pitch, previous_pitch)
+        self.assertAlmostEqual(pitch, 0.0)
 
         # Once clearly away from sideways, pitch is safely reacquired.
         upper, _ = arm_directions(-0.3, math.radians(40.0), 0.0, 0.0)
@@ -101,6 +102,19 @@ class RetargetingKinematicsTest(unittest.TestCase):
         self.assertFalse(locked)
         self.assertGreater(observability, 0.65)
         self.assertAlmostEqual(pitch, -0.3, places=9)
+
+    def test_side_solution_does_not_depend_on_approach_pitch(self):
+        upper, _ = arm_directions(1.9, math.radians(78.0), 0.0, 0.0)
+
+        from_forward = shoulder_pitch_roll_continuous(
+            upper, previous_pitch=-1.8, pitch_locked=False)
+        from_down = shoulder_pitch_roll_continuous(
+            upper, previous_pitch=0.4, pitch_locked=False)
+
+        self.assertTrue(from_forward[2])
+        self.assertTrue(from_down[2])
+        self.assertAlmostEqual(from_forward[0], 0.0)
+        self.assertAlmostEqual(from_down[0], 0.0)
 
     def test_shoulder_yaw_holds_previous_value_near_full_extension(self):
         pitch, roll, yaw = -0.4, 0.3, 1.0

@@ -86,6 +86,17 @@ class DualRetargetingNode(Node):
                 calibration, 'forearm_rotation_tx_to_body')
             self.forearm_axis_local = self._vector(
                 calibration, 'forearm_axis_local')
+            if ('forearm_direction_rotation_tx_to_body' in calibration and
+                    'forearm_direction_axis_local' in calibration):
+                self.forearm_direction_align = self._matrix(
+                    calibration, 'forearm_direction_rotation_tx_to_body')
+                self.forearm_direction_axis_local = self._vector(
+                    calibration, 'forearm_direction_axis_local')
+            else:
+                # Version 10 and older used the isolated twist axis for both
+                # forearm direction and wrist twist.
+                self.forearm_direction_align = self.forearm_align
+                self.forearm_direction_axis_local = self.forearm_axis_local
         else:
             self.R_align = self._matrix(calibration, 'rotation_tx_to_body')
             self.upper_mount = self._matrix(
@@ -121,12 +132,12 @@ class DualRetargetingNode(Node):
         # angles before that amplification begins.
         self.declare_parameter('min_yaw_observability', 0.90)
         # Pitch is undefined at shoulder roll +/-90 degrees.  Enter a protected
-        # state before the direction becomes ill-conditioned, then require a
-        # larger X/Z projection before reacquiring pitch.  This hysteresis keeps
-        # position noise from selecting a different shoulder solution during a
-        # side raise.
+        # state before the direction becomes ill-conditioned and use one
+        # canonical G1 solution there.  Holding the preceding pitch made the
+        # same side pose depend on whether it was reached from FORWARD or DOWN.
         self.declare_parameter('min_pitch_observability', 0.5)
         self.declare_parameter('pitch_reacquire_observability', 0.65)
+        self.declare_parameter('sideways_pitch_target_rad', 0.0)
         self.declare_parameter('publish_joint_targets', False)
         self.declare_parameter('simulation_only', False)
         self.declare_parameter('record_diagnostics', True)
@@ -145,6 +156,9 @@ class DualRetargetingNode(Node):
         self.pitch_reacquire_observability = float(np.clip(
             self.get_parameter('pitch_reacquire_observability').value,
             self.min_pitch_observability + 0.05, 0.99))
+        self.sideways_pitch_target = float(np.clip(
+            self.get_parameter('sideways_pitch_target_rad').value,
+            *JOINT_LIMITS['left_shoulder_pitch_joint']))
         self.publish_joint_targets = bool(
             self.get_parameter('publish_joint_targets').value)
         self.simulation_only = bool(
@@ -212,13 +226,14 @@ class DualRetargetingNode(Node):
             previous_pitch=float(self._raw_angles[0]),
             pitch_locked=was_locked,
             lock_below=self.min_pitch_observability,
-            release_above=self.pitch_reacquire_observability)
+            release_above=self.pitch_reacquire_observability,
+            singular_pitch=self.sideways_pitch_target)
         self._pitch_singularity_locked = locked
         self._pitch_observability = observability
         if locked != was_locked:
-            action = 'holding' if locked else 'reacquiring'
+            action = 'using the canonical' if locked else 'reacquiring the measured'
             self.get_logger().info(
-                f'Shoulder pitch is {action} a continuous solution '
+                f'Shoulder pitch is {action} solution '
                 f'(observability={observability:.2f}).')
         return pitch
 
@@ -318,7 +333,9 @@ class DualRetargetingNode(Node):
                 return
             upper_direction = self.upper_position_align @ upper_offset
             forearm_aligned = self.forearm_align @ R_f
-            forearm_direction = forearm_aligned @ self.forearm_axis_local
+            forearm_direction_aligned = self.forearm_direction_align @ R_f
+            forearm_direction = (
+                forearm_direction_aligned @ self.forearm_direction_axis_local)
             continuous_pitch = self._resolve_continuous_pitch(upper_direction)
             raw = dual_joint_angles_from_segment_vectors(
                 upper_direction,
@@ -477,6 +494,8 @@ class DualRetargetingNode(Node):
                 self.min_pitch_observability),
             'pitch_reacquire_observability': np.asarray(
                 self.pitch_reacquire_observability),
+            'sideways_pitch_target_rad': np.asarray(
+                self.sideways_pitch_target),
             'min_yaw_observability': np.asarray(
                 self.min_yaw_observability),
         })
