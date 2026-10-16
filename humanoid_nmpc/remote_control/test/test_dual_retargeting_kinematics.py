@@ -5,11 +5,13 @@ import numpy as np
 
 from remote_control.dual_retargeting_kinematics import (
     ROTATION_TRANSPOSE_REPORTED,
+    apply_elbow_angle_calibration,
     diagnose_rotation_convention,
     dual_joint_angles,
     dual_joint_angles_from_directions,
     dual_joint_angles_from_segment_vectors,
     estimate_local_rotation_axis,
+    fit_elbow_angle_calibration,
     fit_body_alignment,
     fit_orientation_calibration,
     fit_position_direction_calibration,
@@ -40,6 +42,26 @@ def random_rotation(rng):
 
 
 class DualRetargetingKinematicsTest(unittest.TestCase):
+
+    def test_elbow_affine_calibration_recovers_gain_and_zero(self):
+        target = np.radians([0.0, 0.0, 90.0, 90.0, 90.0])
+        measured = (target - math.radians(-2.0)) / 1.18
+
+        result = fit_elbow_angle_calibration(measured, target)
+
+        self.assertAlmostEqual(result.scale, 1.18, places=12)
+        self.assertAlmostEqual(result.offset_rad, math.radians(-2.0), places=12)
+        np.testing.assert_allclose(result.corrected_angles_rad, target, atol=1e-12)
+
+    def test_elbow_affine_calibration_clamps_to_anatomical_range(self):
+        self.assertAlmostEqual(
+            apply_elbow_angle_calibration(
+                math.radians(85.0), 1.2, math.radians(-1.0)),
+            math.pi / 2.0)
+        self.assertAlmostEqual(
+            apply_elbow_angle_calibration(
+                math.radians(-5.0), 1.2, math.radians(-1.0)),
+            0.0)
 
     def test_rigid_pair_consistency_is_zero_for_fixed_receiver_transform(self):
         centre = np.array([0.12, -0.08, 0.31])
@@ -181,6 +203,26 @@ class DualRetargetingKinematicsTest(unittest.TestCase):
         self.assertAlmostEqual(angles[2], previous_yaw)
         self.assertAlmostEqual(angles[3], math.pi / 2.0)
         self.assertAlmostEqual(angles[4], previous_wrist)
+
+    def test_roll_override_preserves_side_up_solution(self):
+        wanted_roll = math.radians(110.0)
+        shoulder, forearm = arm_frames(
+            0.0, wanted_roll, 0.0, math.pi / 2.0)
+        upper_direction = shoulder @ UPPER_ARM_ZERO_AXIS
+        forearm_direction = forearm @ FOREARM_ZERO_AXIS
+
+        angles = dual_joint_angles_from_segment_vectors(
+            upper_direction,
+            forearm_direction,
+            forearm,
+            np.eye(3),
+            pitch_override=0.0,
+            roll_override=wanted_roll,
+        )
+
+        self.assertAlmostEqual(angles[0], 0.0)
+        self.assertAlmostEqual(angles[1], wanted_roll)
+        self.assertAlmostEqual(angles[3], math.pi / 2.0)
 
     def test_nearly_straight_arm_holds_unreliable_yaw_and_wrist(self):
         previous_yaw = -0.21

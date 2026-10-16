@@ -93,18 +93,27 @@ def shoulder_pitch_roll_continuous(
         release_above: float = 0.65,
         singular_pitch: float = 0.0,
         ) -> Tuple[float, float, bool, float]:
-    """Resolve pitch deterministically through the sideways-arm singularity.
+    """Resolve a continuous shoulder branch through the sideways singularity.
 
     The upper-arm direction determines pitch poorly as shoulder roll approaches
     +/-90 degrees: its X/Z projection tends to zero, so millimetres of position
     noise can rotate the computed pitch by more than 100 degrees.  A hysteresis
     band selects ``singular_pitch`` before that happens and only reacquires the
-    measured pitch after the arm has moved far enough away from the
+    measured branch after the arm has moved far enough away from the
     singularity.  Selecting one canonical solution is essential: holding the
     preceding pitch makes the same side pose depend on whether it was reached
-    from a forward raise or a down pose.  The caller filters/rate-limits the
-    resulting joint target, so entering the canonical branch remains smooth.
-    ``pitch_locked`` is the state returned by the preceding call.
+    from a forward raise or a down pose.
+
+    Roll needs the matching non-principal branch in this region.  ``asin(y)``
+    folds a lateral raise back below the horizontal after 90 degrees.  Once
+    pitch is canonical, rotating the measured direction back by that pitch and
+    using ``atan2(y, -z)`` instead gives a continuous roll through 90 degrees.
+    A locked trajectory stays on this branch while it remains above the side
+    horizontal; otherwise the hysteresis release at about 130 degrees would
+    switch to the equivalent pitch-plus-pi solution in one frame.
+
+    The caller filters/rate-limits the resulting target. ``pitch_locked`` is
+    the state returned by the preceding call.
 
     ``lock_below=0.5`` enters the protected region at about 60 degrees of
     shoulder roll.  ``release_above=0.65`` leaves it below about 49 degrees,
@@ -123,15 +132,28 @@ def shoulder_pitch_roll_continuous(
     u = u / norm
     observability = math.hypot(float(u[0]), float(u[2]))
 
+    canonical_frame_direction = rotation_y(-float(singular_pitch)) @ u
+    canonical_roll = math.atan2(
+        float(canonical_frame_direction[1]),
+        -float(canonical_frame_direction[2]))
+    above_side_horizontal = abs(canonical_roll) > math.pi / 2.0
+
     if pitch_locked:
-        locked = observability < float(release_above)
+        # Do not jump to the pitch+pi / principal-roll representation after
+        # crossing the side horizontal.  Remain on the canonical branch until
+        # the arm returns below it and leaves the hysteresis band.
+        locked = (above_side_horizontal or
+                  observability < float(release_above))
     else:
         locked = observability <= float(lock_below)
 
     measured_pitch, roll = shoulder_pitch_roll(
         u, fallback_pitch=previous_pitch, min_horizontal=0.0)
-    pitch = (unwrap_near(float(singular_pitch), float(previous_pitch))
-             if locked else measured_pitch)
+    if locked:
+        pitch = unwrap_near(float(singular_pitch), float(previous_pitch))
+        roll = canonical_roll
+    else:
+        pitch = measured_pitch
     return pitch, roll, locked, observability
 
 

@@ -20,6 +20,7 @@ from remote_control.dual_retargeting_kinematics import (
     ROTATION_AS_REPORTED,
     ROTATION_CONVENTIONS,
     ROTATION_TRANSPOSE_REPORTED,
+    fit_elbow_angle_calibration,
     apply_rotation_convention,
     estimate_local_rotation_axis,
     fit_position_direction_calibration,
@@ -530,6 +531,36 @@ class DualCalibrationNode(Node):
             for rotation in wrist_zero_forearm_rotations
         ])
 
+        upper_reference_directions = np.array([
+            upper_position_align @
+            (position - position_fit.shoulder_center_tx_m)
+            for position in upper_reference_positions
+        ])
+        upper_reference_directions /= np.linalg.norm(
+            upper_reference_directions, axis=1, keepdims=True)
+        fitted_forearm_directions = np.array([
+            forearm_direction_align @ rotation @
+            forearm_direction_axis_local
+            for rotation in corrected_forearm_rotations
+        ])
+        fitted_forearm_directions /= np.linalg.norm(
+            fitted_forearm_directions, axis=1, keepdims=True)
+        raw_elbow_angles = np.arcsin(np.clip(np.sum(
+            upper_reference_directions * fitted_forearm_directions,
+            axis=1), -1.0, 1.0))
+        target_elbow_angles = np.arcsin(np.clip(np.sum(
+            target_upper_directions * target_forearm_directions,
+            axis=1), -1.0, 1.0))
+        try:
+            elbow_fit = fit_elbow_angle_calibration(
+                raw_elbow_angles, target_elbow_angles)
+        except ValueError as exc:
+            # This correction improves accuracy but is not required to retain
+            # the existing geometric retargeting path.
+            print(f'[WARNING] Elbow gain/zero fit was not usable: {exc}')
+            print('  Continuing with the uncorrected geometric elbow angle.')
+            elbow_fit = None
+
         position_rms_m = float(np.sqrt(np.mean(
             np.square(position_fit.position_errors_m))))
         position_max_m = float(np.max(position_fit.position_errors_m))
@@ -551,6 +582,16 @@ class DualCalibrationNode(Node):
         print(f'    forearm twist repeatability: '
               f'mean={np.mean(forearm_twist_reference_errors):5.2f} deg, '
               f'max={np.max(forearm_twist_reference_errors):5.2f} deg')
+        if elbow_fit is not None:
+            print('    elbow angle correction: '
+                  f'scale={elbow_fit.scale:.4f}, '
+                  f'offset={math.degrees(elbow_fit.offset_rad):+.2f} deg; '
+                  f'RMS {np.sqrt(np.mean(np.square(elbow_fit.raw_errors_deg))):.2f}'
+                  ' -> '
+                  f'{np.sqrt(np.mean(np.square(elbow_fit.corrected_errors_deg))):.2f} deg, '
+                  f'max {np.max(np.abs(elbow_fit.raw_errors_deg)):.2f}'
+                  ' -> '
+                  f'{np.max(np.abs(elbow_fit.corrected_errors_deg)):.2f} deg')
         print(f'    upper position model: radius='
               f'{position_fit.receiver_radius_m*100:.1f} cm, '
               f'RMS={position_rms_m*1000:.1f} mm, '
@@ -610,7 +651,7 @@ class DualCalibrationNode(Node):
                 return
 
         calibration = {
-            'version': 11,
+            'version': 12,
             'mode': 'dual_receiver_hybrid',
             'dry_run_only': dry_run_only,
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
@@ -634,6 +675,15 @@ class DualCalibrationNode(Node):
             'forearm_direction_rotation_tx_to_body': _matrix_list(
                 forearm_direction_align),
             'forearm_sensor_mount_rotation': _matrix_list(forearm_mount),
+            'elbow_angle_calibration_method': (
+                'multi_pose_affine_with_anatomical_limits'
+                if elbow_fit is not None else 'none'),
+            'elbow_angle_scale': round(
+                elbow_fit.scale if elbow_fit is not None else 1.0, 8),
+            'elbow_angle_offset_rad': round(
+                elbow_fit.offset_rad if elbow_fit is not None else 0.0, 8),
+            'elbow_angle_min_rad': 0.0,
+            'elbow_angle_max_rad': round(math.pi / 2.0, 8),
             'quality': {
                 **{key: round(float(value), 8) for key, value in static_quality.items()},
                 'upper_assignment_excursion_deg': round(upper_excursion, 4),
@@ -671,6 +721,14 @@ class DualCalibrationNode(Node):
                 'forearm_twist_repeatability_errors_deg': [
                     round(float(value), 4)
                     for value in forearm_twist_reference_errors],
+                'elbow_raw_errors_deg': (
+                    [round(float(value), 4)
+                     for value in elbow_fit.raw_errors_deg]
+                    if elbow_fit is not None else []),
+                'elbow_corrected_errors_deg': (
+                    [round(float(value), 4)
+                     for value in elbow_fit.corrected_errors_deg]
+                    if elbow_fit is not None else []),
             },
         }
         self._save(calibration)

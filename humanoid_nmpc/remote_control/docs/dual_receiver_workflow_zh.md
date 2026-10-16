@@ -278,11 +278,37 @@ ros2 launch g1_centroidal_mpc mujoco_sim.launch.py
 - 60 ms 一阶低通滤波；
 - 2.5 rad/s 默认关节速度限制；
 - 250 ms 数据看门狗。
+- 默认开启的 G1 左臂—躯干碰撞过滤器。过滤器使用 `g1_23dof.urdf` 的关节轴和固定
+  变换做正向运动学，将大臂、前臂和手近似为胶囊体，并在发布前保持至少 25 mm 的
+  模型间隙。危险目标优先通过最小幅度增加左肩 roll 投影到安全区；45°范围内找不到
+  安全解时保持上一安全目标。它不会修改人体标定，也不会把修正量反馈到人体关节解算。
+
+碰撞保护生效时，终端会出现一次 `Torso collision protection activated`，常规状态输出
+会附带 `torso guard`、肩 roll 修正量和保护后的间隙。完整 NPZ 同时记录：
+
+- `pre_collision_joint_angles_rad`：碰撞保护前的五个目标角；
+- `commanded_joint_angles_rad`：实际发给 MPC 的安全目标角；
+- `collision_raw_clearance_m` 和 `collision_safe_clearance_m`；
+- `collision_filter_active`、`collision_filter_held` 和
+  `collision_roll_adjustment_rad`。
+
+仿真调试时可显式设置参数：
+
+```bash
+ros2 run remote_control dual_retargeting_node --ros-args \
+  -p publish_joint_targets:=true \
+  -p simulation_only:=true \
+  -p enable_torso_collision_filter:=true \
+  -p torso_collision_margin_m:=0.025
+```
+
+`enable_torso_collision_filter:=false` 只用于 MuJoCo 中做前后对照，禁止用于实机。
 
 正侧平举时，大臂方向接近身体横向轴，`shoulder_pitch` 在数学上不可观测。实时节点在该
 区域统一选用 `sideways_pitch_target_rad=0.0` 的 G1 标准解，并通过低通和速度限制平滑
 进入该解。这样从前平举转到侧平举和从下垂直接转到侧平举会得到相同的肩部姿态，不再
 保留进入奇异区之前的 pitch。该参数只用于侧平举奇异区，正常前举和下垂仍由测量方向
-决定。
+决定。在标准 pitch 分支内，roll 使用 `atan2` 连续通过 90°，因此 MuJoCo 可测试到
+约 110° 的侧上举。G1 左肩 roll 上限约 129°；超过上限时节点会警告并截断目标。
 
 这些参数可以通过 ROS 参数调整。在完成仿真记录和误差评估前，不要增大关节速度限制。

@@ -116,6 +116,33 @@ class RetargetingKinematicsTest(unittest.TestCase):
         self.assertAlmostEqual(from_forward[0], 0.0)
         self.assertAlmostEqual(from_down[0], 0.0)
 
+    def test_side_raise_roll_continues_above_horizontal(self):
+        previous_pitch = 0.0
+        locked = False
+
+        for roll_deg in (70.0, 85.0, 90.0, 100.0, 110.0):
+            upper, _ = arm_directions(
+                0.0, math.radians(roll_deg), 0.0, 0.0)
+            pitch, roll, locked, _ = shoulder_pitch_roll_continuous(
+                upper, previous_pitch=previous_pitch, pitch_locked=locked)
+
+            self.assertTrue(locked)
+            self.assertAlmostEqual(pitch, 0.0, places=9)
+            self.assertAlmostEqual(roll, math.radians(roll_deg), places=9)
+            previous_pitch = pitch
+
+    def test_side_up_branch_does_not_release_above_hysteresis_band(self):
+        upper, _ = arm_directions(
+            0.0, math.radians(135.0), 0.0, 0.0)
+
+        pitch, roll, locked, observability = shoulder_pitch_roll_continuous(
+            upper, previous_pitch=0.0, pitch_locked=True)
+
+        self.assertGreater(observability, 0.65)
+        self.assertTrue(locked)
+        self.assertAlmostEqual(pitch, 0.0, places=9)
+        self.assertAlmostEqual(roll, math.radians(135.0), places=9)
+
     def test_shoulder_yaw_holds_previous_value_near_full_extension(self):
         pitch, roll, yaw = -0.4, 0.3, 1.0
         upper, forearm = arm_directions(pitch, roll, yaw, math.radians(89.0))

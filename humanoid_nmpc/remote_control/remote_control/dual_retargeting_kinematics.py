@@ -97,12 +97,91 @@ class RigidPairConsistencyResult:
     rotation_max_deg: float
 
 
+@dataclass(frozen=True)
+class ElbowAngleCalibrationResult:
+    """Affine correction for the direction-derived elbow angle."""
+
+    scale: float
+    offset_rad: float
+    raw_angles_rad: np.ndarray
+    corrected_angles_rad: np.ndarray
+    target_angles_rad: np.ndarray
+    raw_errors_deg: np.ndarray
+    corrected_errors_deg: np.ndarray
+
+
 ROTATION_AS_REPORTED = 'as_reported'
 ROTATION_TRANSPOSE_REPORTED = 'transpose_reported'
 ROTATION_CONVENTIONS = (
     ROTATION_AS_REPORTED,
     ROTATION_TRANSPOSE_REPORTED,
 )
+
+
+def apply_elbow_angle_calibration(angle_rad: float,
+                                  scale: float,
+                                  offset_rad: float,
+                                  minimum_rad: float = 0.0,
+                                  maximum_rad: float = math.pi / 2.0) -> float:
+    """Apply the per-installation elbow gain/zero and anatomical limits."""
+    if not all(math.isfinite(value) for value in (
+            angle_rad, scale, offset_rad, minimum_rad, maximum_rad)):
+        raise ValueError('elbow calibration contains a non-finite value')
+    if scale <= 0.0 or minimum_rad >= maximum_rad:
+        raise ValueError('invalid elbow calibration scale or limits')
+    return float(np.clip(
+        scale * float(angle_rad) + offset_rad,
+        minimum_rad,
+        maximum_rad))
+
+
+def fit_elbow_angle_calibration(measured_angles_rad: np.ndarray,
+                                target_angles_rad: np.ndarray,
+                                minimum_rad: float = 0.0,
+                                maximum_rad: float = math.pi / 2.0,
+                                ) -> ElbowAngleCalibrationResult:
+    """Fit elbow gain and zero from the existing static reference poses.
+
+    Direction-fit residuals make a fully extended elbow appear several
+    degrees short of 90 degrees.  A two-parameter least-squares fit uses both
+    bent and straight references, avoiding the large bent-arm error caused by
+    adding a fixed extension offset.  Limits are applied only when reporting
+    the corrected residual and later during online retargeting.
+    """
+    measured = np.asarray(measured_angles_rad, dtype=float).reshape(-1)
+    target = np.asarray(target_angles_rad, dtype=float).reshape(-1)
+    if measured.shape != target.shape or measured.size < 4:
+        raise ValueError('at least four paired elbow references are required')
+    if not np.all(np.isfinite(measured)) or not np.all(np.isfinite(target)):
+        raise ValueError('elbow reference angles contain non-finite values')
+    if float(np.ptp(target)) < math.radians(45.0):
+        raise ValueError('elbow references do not span bent and straight poses')
+
+    design = np.column_stack((measured, np.ones(measured.size)))
+    solution, _, rank, _ = np.linalg.lstsq(design, target, rcond=None)
+    if rank < 2:
+        raise ValueError('elbow gain and zero are not independently observable')
+    scale, offset = map(float, solution)
+    # These bounds catch a failed reference acquisition while allowing the
+    # 1.14--1.32 gains seen across successful reattachments.
+    if not 0.75 <= scale <= 1.50:
+        raise ValueError(f'implausible elbow angle scale {scale:.3f}')
+    if abs(offset) > math.radians(20.0):
+        raise ValueError(
+            f'implausible elbow angle offset {math.degrees(offset):.1f} deg')
+
+    corrected = np.clip(scale * measured + offset, minimum_rad, maximum_rad)
+    raw_errors = np.degrees(measured - target)
+    corrected_errors = np.degrees(corrected - target)
+    return ElbowAngleCalibrationResult(
+        scale=scale,
+        offset_rad=offset,
+        raw_angles_rad=measured,
+        corrected_angles_rad=corrected,
+        target_angles_rad=target,
+        raw_errors_deg=raw_errors,
+        corrected_errors_deg=corrected_errors,
+    )
 
 
 def select_rotation_convention(direction_rms_by_convention,
@@ -879,6 +958,7 @@ def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
                                      min_pitch_observability: float = 0.2,
                                      min_yaw_observability: float = 0.55,
                                      pitch_override: Optional[float] = None,
+                                     roll_override: Optional[float] = None,
                                      ) -> np.ndarray:
     """Map two segment directions and forearm twist to five arm angles."""
     alignment = np.asarray(rotation_tx_to_body, dtype=float)
@@ -897,6 +977,7 @@ def dual_joint_angles_from_directions(upper_sensor_rotation_tx: np.ndarray,
         min_pitch_observability=min_pitch_observability,
         min_yaw_observability=min_yaw_observability,
         pitch_override=pitch_override,
+        roll_override=roll_override,
     )
 
 
@@ -910,7 +991,8 @@ def dual_joint_angles_from_segment_vectors(
         min_yaw_observability: float = 0.55,
         previous_pitch: float = 0.0,
         min_pitch_observability: float = 0.2,
-        pitch_override: Optional[float] = None) -> np.ndarray:
+        pitch_override: Optional[float] = None,
+        roll_override: Optional[float] = None) -> np.ndarray:
     """Map body-frame segment directions and forearm attitude to joints."""
     upper_direction = np.asarray(upper_direction_body, dtype=float).copy()
     forearm_direction = np.asarray(forearm_direction_body, dtype=float).copy()
@@ -928,6 +1010,7 @@ def dual_joint_angles_from_segment_vectors(
         min_horizontal=min_pitch_observability)
     pitch = (measured_pitch if pitch_override is None
              else float(pitch_override))
+    roll = (roll if roll_override is None else float(roll_override))
     yaw, yaw_observable = shoulder_yaw(
         upper_direction, forearm_direction, pitch, roll,
         fallback=previous_yaw,
