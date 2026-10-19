@@ -30,6 +30,31 @@ STATIONARY_JOINTS = (
     12, 15, 16, 17, 18, 19,
     22, 23, 24, 25, 26,
 )
+JOINT_NAMES = {
+    0: "left_hip_pitch",
+    1: "left_hip_roll",
+    2: "left_hip_yaw",
+    3: "left_knee",
+    4: "left_ankle_pitch",
+    5: "left_ankle_roll",
+    6: "right_hip_pitch",
+    7: "right_hip_roll",
+    8: "right_hip_yaw",
+    9: "right_knee",
+    10: "right_ankle_pitch",
+    11: "right_ankle_roll",
+    12: "waist_yaw",
+    15: "left_shoulder_pitch",
+    16: "left_shoulder_roll",
+    17: "left_shoulder_yaw",
+    18: "left_elbow",
+    19: "left_wrist_roll",
+    22: "right_shoulder_pitch",
+    23: "right_shoulder_roll",
+    24: "right_shoulder_yaw",
+    25: "right_elbow",
+    26: "right_wrist_roll",
+}
 JOINT_SPECS = {
     "left_shoulder_pitch": (15, (-3.0892, 2.6704)),
     "left_shoulder_roll": (16, (-1.5882, 2.2515)),
@@ -76,14 +101,20 @@ def smoothstep(progress: float) -> float:
 def validate_state(state: LowState_, joint_name: str, joint_index: int, limits) -> None:
     roll, pitch = state.imu_state.rpy[:2]
     max_tilt = max(abs(math.degrees(roll)), abs(math.degrees(pitch)))
-    max_speed = max(abs(state.motor_state[index].dq) for index in STATIONARY_JOINTS)
+    fastest_index = max(
+        STATIONARY_JOINTS,
+        key=lambda index: abs(state.motor_state[index].dq),
+    )
+    max_speed = abs(state.motor_state[fastest_index].dq)
     joint_position = state.motor_state[joint_index].q
 
     if max_tilt > 10.0:
         raise RuntimeError(f"IMU tilt is {max_tilt:.1f} deg; expected a stable standing pose")
     if max_speed > 0.3:
         raise RuntimeError(
-            f"robot is moving (maximum measured joint speed {max_speed:.2f} rad/s)"
+            "robot is moving "
+            f"({JOINT_NAMES[fastest_index]}[{fastest_index}] measured speed "
+            f"{state.motor_state[fastest_index].dq:+.2f} rad/s; limit 0.30 rad/s)"
         )
     if not limits[0] <= joint_position <= limits[1]:
         raise RuntimeError(
@@ -111,7 +142,11 @@ def send_phase(
     desired_fn,
     weight_fn,
     label: str,
+    joint_name: str,
     joint_index: int,
+    limits,
+    command_state,
+    monitor_motion: bool = True,
 ) -> None:
     started = time.monotonic()
     next_tick = started
@@ -125,21 +160,29 @@ def send_phase(
 
         state, received_at = receiver.snapshot()
         if state is None or now - received_at > 0.2:
-            raise RuntimeError("LowState timeout; stopping arm command stream")
+            if monitor_motion:
+                raise RuntimeError("LowState timeout; stopping arm command stream")
+            state = None
+        elif monitor_motion:
+            validate_state(state, joint_name, joint_index, limits)
 
         progress = elapsed / duration
         desired = desired_fn(progress)
         weight = weight_fn(progress)
+        command_state["weight"] = weight
         fill_command(command, desired, weight)
         command.crc = crc.Crc(command)
         publisher.Write(command)
 
         if now >= next_log:
-            actual_deg = math.degrees(state.motor_state[joint_index].q)
+            actual_text = (
+                f"{math.degrees(state.motor_state[joint_index].q):+7.2f} deg"
+                if state is not None else " unavailable"
+            )
             target_deg = math.degrees(desired[joint_index])
             print(
                 f"{label:<9} target={target_deg:+7.2f} deg  "
-                f"actual={actual_deg:+7.2f} deg  arm_sdk_weight={weight:.2f}"
+                f"actual={actual_text}  arm_sdk_weight={weight:.2f}"
             )
             next_log = now + 0.5
 
@@ -181,6 +224,7 @@ def execute_test(
     publisher.Init()
     command = unitree_hg_msg_dds__LowCmd_()
     crc = CRC()
+    command_state = {"weight": 0.0}
 
     hold_initial = lambda _progress: initial
     move_out = lambda progress: {
@@ -198,19 +242,23 @@ def execute_test(
     try:
         send_phase(
             publisher, command, crc, receiver, 2.0,
-            hold_initial, smoothstep, "takeover", joint_index,
+            hold_initial, smoothstep, "takeover",
+            joint_name, joint_index, limits, command_state,
         )
         send_phase(
             publisher, command, crc, receiver, 3.0,
-            move_out, lambda _progress: 1.0, "move", joint_index,
+            move_out, lambda _progress: 1.0, "move",
+            joint_name, joint_index, limits, command_state,
         )
         send_phase(
             publisher, command, crc, receiver, 1.0,
-            hold_target, lambda _progress: 1.0, "hold", joint_index,
+            hold_target, lambda _progress: 1.0, "hold",
+            joint_name, joint_index, limits, command_state,
         )
         send_phase(
             publisher, command, crc, receiver, 3.0,
-            move_back, lambda _progress: 1.0, "return", joint_index,
+            move_back, lambda _progress: 1.0, "return",
+            joint_name, joint_index, limits, command_state,
         )
     finally:
         # Keep the last measured pose while blending arm control back to the
@@ -222,11 +270,13 @@ def execute_test(
                 index: state.motor_state[index].q
                 for index in CONTROLLED_JOINTS
             }
+        release_start_weight = command_state["weight"]
         send_phase(
             publisher, command, crc, receiver, 2.0,
             lambda _progress: release_pose,
-            lambda progress: 1.0 - smoothstep(progress),
-            "release", joint_index,
+            lambda progress: release_start_weight * (1.0 - smoothstep(progress)),
+            "release", joint_name, joint_index, limits,
+            command_state, monitor_motion=False,
         )
         fill_command(command, release_pose, 0.0)
         command.crc = crc.Crc(command)

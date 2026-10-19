@@ -46,6 +46,7 @@ class LowStateMonitor:
         self.first_message = threading.Event()
         self.last_message_time = 0.0
         self.last_print_time = 0.0
+        self.peak_signed_speed = {index: 0.0 for index, _name in G1_23DOF_JOINTS}
         self.subscriber = ChannelSubscriber("rt/lowstate", LowState_)
 
     def start(self) -> None:
@@ -59,6 +60,11 @@ class LowStateMonitor:
         self.message_count += 1
         self.last_message_time = now
         self.first_message.set()
+
+        for index, _name in G1_23DOF_JOINTS:
+            speed = msg.motor_state[index].dq
+            if abs(speed) > abs(self.peak_signed_speed[index]):
+                self.peak_signed_speed[index] = speed
 
         if now - self.last_print_time < self.print_period:
             return
@@ -125,6 +131,17 @@ def main() -> int:
         monitor.close()
 
     print(f"\nFinished after receiving {count} LowState messages.")
+    print("Peak absolute joint speeds during this read-only observation:")
+    ranked = sorted(
+        G1_23DOF_JOINTS,
+        key=lambda item: abs(monitor.peak_signed_speed[item[0]]),
+        reverse=True,
+    )
+    for index, name in ranked[:5]:
+        print(
+            f"  {name}[{index}]: "
+            f"{monitor.peak_signed_speed[index]:+.3f} rad/s"
+        )
     return 0
 
 
