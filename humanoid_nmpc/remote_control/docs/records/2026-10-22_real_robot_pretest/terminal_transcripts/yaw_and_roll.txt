@@ -1,0 +1,845 @@
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 25 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 5 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints yaw \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=-4.6 roll=+14.3 yaw=-17.9 elbow=+0.0 wrist=-6.4 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.7 roll=+12.8 yaw=-1.5 elbow=+55.8 wrist=+8.0 deg
+Active tracked joints: yaw
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.58  target_age=1 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.73  target_age=2 ms
+takeover weight=0.80  target_age=0 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=2 ms
+takeover weight=1.00  target_age=2 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: yaw -8.5/-1.5/-1.5/-1.6
+active source/applied/desired/actual deg: yaw -8.5/-1.5/-1.5/-1.6
+active source/applied/desired/actual deg: yaw -8.1/-1.1/-1.1/-1.5
+active source/applied/desired/actual deg: yaw -7.5/-0.5/-0.5/-0.5
+active source/applied/desired/actual deg: yaw -2.4/+4.6/+1.6/+0.8
+active source/applied/desired/actual deg: yaw +9.3/+16.3/+3.5/+2.9
+active source/applied/desired/actual deg: yaw +10.1/+17.1/+3.5/+2.9
+active source/applied/desired/actual deg: yaw +11.8/+18.8/+3.5/+2.9
+active source/applied/desired/actual deg: yaw +1.1/+8.1/+3.5/+2.9
+active source/applied/desired/actual deg: yaw -13.2/-6.2/+1.5/+2.2
+active source/applied/desired/actual deg: yaw -30.6/-23.6/-1.6/-1.4
+active source/applied/desired/actual deg: yaw -39.5/-32.5/-4.6/-4.3
+active source/applied/desired/actual deg: yaw -44.9/-37.9/-6.5/-6.5
+active source/applied/desired/actual deg: yaw -47.3/-40.3/-6.5/-6.5
+active source/applied/desired/actual deg: yaw -31.6/-24.6/-6.5/-6.5
+active source/applied/desired/actual deg: yaw -9.5/-2.5/-6.0/-6.4
+active source/applied/desired/actual deg: yaw +10.4/+17.4/-3.0/-4.0
+active source/applied/desired/actual deg: yaw +26.5/+33.5/+0.1/-0.2
+active source/applied/desired/actual deg: yaw +31.7/+38.7/+3.1/+2.3
+active source/applied/desired/actual deg: yaw +34.2/+41.2/+3.5/+2.9
+active source/applied/desired/actual deg: yaw +18.7/+25.7/+3.5/+2.9
+active source/applied/desired/actual deg: yaw -13.1/-6.1/+2.3/+2.7
+active source/applied/desired/actual deg: yaw -22.9/-15.9/-0.7/-0.3
+active source/applied/desired/actual deg: yaw -31.5/-24.5/-3.7/-3.2
+active source/applied/desired/actual deg: yaw -39.0/-32.0/-6.5/-6.5
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.33
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1250 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T143446Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 30 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 10 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints yaw \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+3.7 roll=+19.0 yaw=-19.8 elbow=+0.0 wrist=-10.1 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=-1.5 elbow=+55.9 wrist=+8.0 deg
+Active tracked joints: yaw
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=0 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.59  target_age=2 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.74  target_age=2 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=2 ms
+takeover weight=0.95  target_age=0 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=0 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: yaw -11.1/-1.5/-1.5/-1.6
+active source/applied/desired/actual deg: yaw -10.5/-1.0/-1.0/-1.5
+active source/applied/desired/actual deg: yaw -10.0/-0.4/-0.4/-1.3
+active source/applied/desired/actual deg: yaw -6.3/+3.2/+2.2/+1.3
+active source/applied/desired/actual deg: yaw +6.2/+15.8/+5.3/+4.7
+active source/applied/desired/actual deg: yaw +12.2/+21.7/+8.4/+7.4
+active source/applied/desired/actual deg: yaw +17.1/+26.6/+8.5/+7.5
+active source/applied/desired/actual deg: yaw +23.8/+33.3/+8.5/+7.5
+active source/applied/desired/actual deg: yaw +24.6/+34.2/+8.5/+7.5
+active source/applied/desired/actual deg: yaw +22.7/+32.2/+8.5/+7.5
+active source/applied/desired/actual deg: yaw +14.1/+23.7/+8.5/+7.5
+active source/applied/desired/actual deg: yaw -9.1/+0.4/+7.3/+7.3
+active source/applied/desired/actual deg: yaw -22.9/-13.3/+4.3/+4.6
+active source/applied/desired/actual deg: yaw -35.6/-26.1/+1.2/+2.0
+active source/applied/desired/actual deg: yaw -43.1/-33.6/-1.9/-1.6
+active source/applied/desired/actual deg: yaw -55.1/-45.6/-4.9/-4.6
+active source/applied/desired/actual deg: yaw -62.6/-53.1/-8.0/-7.3
+active source/applied/desired/actual deg: yaw -68.0/-58.5/-11.0/-10.5
+active source/applied/desired/actual deg: yaw -68.1/-58.5/-11.5/-11.1
+active source/applied/desired/actual deg: yaw -67.8/-58.2/-11.5/-11.1
+active source/applied/desired/actual deg: yaw -50.0/-40.4/-11.5/-11.1
+active source/applied/desired/actual deg: yaw -37.0/-27.5/-11.5/-11.1
+active source/applied/desired/actual deg: yaw -13.4/-3.8/-10.1/-10.8
+active source/applied/desired/actual deg: yaw -0.9/+8.6/-7.1/-7.9
+active source/applied/desired/actual deg: yaw +7.8/+17.3/-4.1/-4.6
+active source/applied/desired/actual deg: yaw +11.5/+21.0/-1.0/-1.7
+active source/applied/desired/actual deg: yaw +15.3/+24.9/+2.0/+1.0
+active source/applied/desired/actual deg: yaw +1.4/+10.9/+5.0/+4.5
+active source/applied/desired/actual deg: yaw -5.9/+3.7/+4.9/+5.1
+active source/applied/desired/actual deg: yaw -9.6/-0.0/+1.9/+2.3
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1500 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T143602Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 35 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 15 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints yaw \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+3.0 roll=+18.0 yaw=-18.3 elbow=+0.0 wrist=-10.2 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: yaw
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=2 ms
+takeover weight=0.06  target_age=3 ms
+takeover weight=0.10  target_age=4 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.59  target_age=1 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.74  target_age=102 ms
+takeover weight=0.80  target_age=3 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=2 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=2 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: yaw -17.8/+0.3/+0.3/+0.3
+active source/applied/desired/actual deg: yaw -16.0/+2.1/+1.3/+0.7
+active source/applied/desired/actual deg: yaw -11.2/+6.9/+4.3/+3.5
+active source/applied/desired/actual deg: yaw -8.9/+9.2/+7.4/+6.8
+active source/applied/desired/actual deg: yaw +9.1/+27.1/+10.4/+9.5
+active source/applied/desired/actual deg: yaw +21.6/+39.6/+13.4/+12.5
+active source/applied/desired/actual deg: yaw +27.5/+45.6/+15.3/+14.3
+active source/applied/desired/actual deg: yaw +27.4/+45.5/+15.3/+14.4
+active source/applied/desired/actual deg: yaw +28.0/+46.0/+15.3/+14.4
+active source/applied/desired/actual deg: yaw +34.4/+52.5/+15.3/+14.4
+active source/applied/desired/actual deg: yaw +26.2/+44.3/+15.3/+14.4
+active source/applied/desired/actual deg: yaw +4.7/+22.7/+15.3/+14.4
+active source/applied/desired/actual deg: yaw -7.6/+10.5/+14.2/+14.3
+active source/applied/desired/actual deg: yaw -21.3/-3.3/+11.2/+11.6
+active source/applied/desired/actual deg: yaw -30.2/-12.2/+8.2/+8.8
+active source/applied/desired/actual deg: yaw -35.4/-17.4/+5.1/+5.3
+active source/applied/desired/actual deg: yaw -39.4/-21.3/+2.0/+2.5
+active source/applied/desired/actual deg: yaw -43.6/-25.6/-1.0/-0.3
+active source/applied/desired/actual deg: yaw -49.4/-31.3/-4.0/-3.6
+active source/applied/desired/actual deg: yaw -55.1/-37.1/-7.0/-6.6
+active source/applied/desired/actual deg: yaw -62.7/-44.7/-10.1/-9.2
+active source/applied/desired/actual deg: yaw -66.8/-48.7/-13.1/-12.9
+active source/applied/desired/actual deg: yaw -66.9/-48.8/-14.7/-14.0
+active source/applied/desired/actual deg: yaw -53.6/-35.5/-14.7/-14.0
+active source/applied/desired/actual deg: yaw -35.1/-17.0/-14.7/-14.1
+active source/applied/desired/actual deg: yaw -19.6/-1.5/-12.1/-12.8
+active source/applied/desired/actual deg: yaw -7.7/+10.4/-9.1/-10.2
+active source/applied/desired/actual deg: yaw -0.9/+17.2/-6.0/-6.5
+active source/applied/desired/actual deg: yaw +0.5/+18.6/-3.0/-4.0
+active source/applied/desired/actual deg: yaw +1.3/+19.3/+0.0/-0.3
+active source/applied/desired/actual deg: yaw +7.8/+25.9/+3.1/+2.3
+active source/applied/desired/actual deg: yaw +13.9/+32.0/+6.1/+5.3
+active source/applied/desired/actual deg: yaw +17.3/+35.4/+9.1/+8.2
+active source/applied/desired/actual deg: yaw +24.8/+42.8/+12.1/+11.6
+active source/applied/desired/actual deg: yaw +32.9/+51.0/+15.1/+14.2
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.97
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.19
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1750 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T143724Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 35 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 15 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints yaw \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+4.4 roll=+22.0 yaw=-24.0 elbow=+0.0 wrist=-7.8 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.8 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: yaw
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=0 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=2 ms
+takeover weight=0.21  target_age=3 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=2 ms
+takeover weight=0.59  target_age=1 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.74  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: yaw -18.0/+0.3/+0.3/+0.3
+active source/applied/desired/actual deg: yaw -16.8/+1.5/+1.5/+0.8
+active source/applied/desired/actual deg: yaw -5.1/+13.2/+4.4/+3.7
+active source/applied/desired/actual deg: yaw +9.8/+28.1/+7.5/+6.9
+active source/applied/desired/actual deg: yaw +11.1/+29.4/+10.5/+9.6
+active source/applied/desired/actual deg: yaw +14.2/+32.5/+13.5/+12.9
+active source/applied/desired/actual deg: yaw +16.4/+34.7/+15.3/+14.3
+active source/applied/desired/actual deg: yaw +0.8/+19.1/+15.3/+14.4
+active source/applied/desired/actual deg: yaw -10.1/+8.2/+12.8/+13.4
+active source/applied/desired/actual deg: yaw -19.2/-0.9/+9.8/+10.3
+active source/applied/desired/actual deg: yaw -25.3/-7.0/+6.8/+7.0
+active source/applied/desired/actual deg: yaw -30.1/-11.7/+3.8/+4.3
+active source/applied/desired/actual deg: yaw -38.4/-20.1/+0.8/+1.3
+active source/applied/desired/actual deg: yaw -44.5/-26.2/-2.3/-1.9
+active source/applied/desired/actual deg: yaw -49.3/-31.0/-5.4/-4.7
+active source/applied/desired/actual deg: yaw -53.3/-35.0/-8.4/-8.2
+active source/applied/desired/actual deg: yaw -54.9/-36.6/-11.4/-10.9
+active source/applied/desired/actual deg: yaw -57.4/-39.0/-14.5/-13.7
+active source/applied/desired/actual deg: yaw -58.9/-40.6/-14.7/-14.1
+active source/applied/desired/actual deg: yaw -48.4/-30.1/-14.7/-14.1
+active source/applied/desired/actual deg: yaw -43.6/-25.3/-14.7/-14.1
+active source/applied/desired/actual deg: yaw -35.6/-17.3/-14.7/-14.1
+active source/applied/desired/actual deg: yaw -29.0/-10.7/-12.9/-13.3
+active source/applied/desired/actual deg: yaw -24.4/-6.1/-9.9/-10.7
+active source/applied/desired/actual deg: yaw -19.9/-1.6/-6.8/-7.2
+active source/applied/desired/actual deg: yaw -16.2/+2.1/-3.8/-4.5
+active source/applied/desired/actual deg: yaw -12.2/+6.1/-0.8/-1.5
+active source/applied/desired/actual deg: yaw -9.7/+8.6/+2.3/+1.4
+active source/applied/desired/actual deg: yaw -2.5/+15.8/+5.3/+4.7
+active source/applied/desired/actual deg: yaw +6.5/+24.9/+8.4/+7.4
+active source/applied/desired/actual deg: yaw +1.4/+19.7/+11.4/+11.0
+active source/applied/desired/actual deg: yaw -10.3/+8.0/+11.0/+11.4
+active source/applied/desired/actual deg: yaw -18.4/-0.0/+8.0/+8.6
+active source/applied/desired/actual deg: yaw -25.1/-6.8/+5.0/+5.2
+active source/applied/desired/actual deg: yaw -28.8/-10.5/+2.0/+2.4
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.42
+release weight=0.34
+release weight=0.27
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1750 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T143853Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 25 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 5 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints roll \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=-2.4 roll=+26.5 yaw=-34.4 elbow=+0.0 wrist=-6.2 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: roll
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=3 ms
+takeover weight=0.02  target_age=3 ms
+takeover weight=0.05  target_age=2 ms
+takeover weight=0.10  target_age=2 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=2 ms
+takeover weight=0.28  target_age=2 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=3 ms
+takeover weight=0.51  target_age=2 ms
+takeover weight=0.59  target_age=1 ms
+takeover weight=0.66  target_age=4 ms
+takeover weight=0.73  target_age=1 ms
+takeover weight=0.80  target_age=2 ms
+takeover weight=0.86  target_age=2 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=0 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: roll +20.9/+12.7/+12.7/+11.7
+active source/applied/desired/actual deg: roll +20.8/+12.7/+12.7/+11.6
+active source/applied/desired/actual deg: roll +20.6/+12.4/+12.4/+11.5
+active source/applied/desired/actual deg: roll +20.7/+12.5/+12.5/+11.4
+active source/applied/desired/actual deg: roll +20.4/+12.3/+12.3/+11.4
+active source/applied/desired/actual deg: roll +21.6/+13.5/+12.7/+11.3
+active source/applied/desired/actual deg: roll +29.4/+21.2/+15.7/+13.6
+active source/applied/desired/actual deg: roll +33.3/+25.2/+17.7/+15.7
+active source/applied/desired/actual deg: roll +35.6/+27.5/+17.7/+15.7
+active source/applied/desired/actual deg: roll +35.0/+26.9/+17.7/+15.7
+active source/applied/desired/actual deg: roll +30.9/+22.8/+17.7/+15.7
+active source/applied/desired/actual deg: roll +23.4/+15.2/+16.7/+15.5
+active source/applied/desired/actual deg: roll +18.7/+10.6/+13.7/+13.0
+active source/applied/desired/actual deg: roll +19.9/+11.7/+11.7/+10.7
+active source/applied/desired/actual deg: roll +20.8/+12.7/+12.7/+11.2
+active source/applied/desired/actual deg: roll +20.6/+12.5/+12.5/+11.2
+active source/applied/desired/actual deg: roll +19.7/+11.5/+11.5/+10.8
+active source/applied/desired/actual deg: roll +18.7/+10.6/+10.6/+10.0
+active source/applied/desired/actual deg: roll +17.5/+9.4/+9.4/+8.9
+active source/applied/desired/actual deg: roll +16.7/+8.5/+8.5/+8.3
+active source/applied/desired/actual deg: roll +25.8/+17.6/+10.8/+9.2
+active source/applied/desired/actual deg: roll +22.7/+14.5/+13.9/+11.8
+active source/applied/desired/actual deg: roll +19.9/+11.8/+11.8/+10.8
+active source/applied/desired/actual deg: roll +18.7/+10.5/+10.5/+10.0
+active source/applied/desired/actual deg: roll +19.4/+11.3/+11.3/+9.6
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1250 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T144005Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 30 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 10 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints roll \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+5.1 roll=+20.4 yaw=-21.8 elbow=+1.4 wrist=-5.5 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: roll
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=3 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.58  target_age=1 ms
+takeover weight=0.66  target_age=161 ms
+takeover weight=0.73  target_age=2 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=2 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: roll +19.1/+12.7/+12.7/+11.7
+active source/applied/desired/actual deg: roll +18.5/+12.2/+12.2/+11.2
+active source/applied/desired/actual deg: roll +18.4/+12.1/+12.1/+11.2
+active source/applied/desired/actual deg: roll +17.8/+11.5/+11.5/+10.9
+active source/applied/desired/actual deg: roll +17.4/+11.1/+11.1/+10.5
+active source/applied/desired/actual deg: roll +29.1/+22.8/+13.8/+11.8
+active source/applied/desired/actual deg: roll +33.2/+26.9/+16.8/+14.6
+active source/applied/desired/actual deg: roll +37.7/+31.4/+19.8/+17.6
+active source/applied/desired/actual deg: roll +43.7/+37.4/+22.7/+20.1
+active source/applied/desired/actual deg: roll +47.5/+41.2/+22.7/+20.2
+active source/applied/desired/actual deg: roll +46.5/+40.2/+22.7/+20.2
+active source/applied/desired/actual deg: roll +40.8/+34.5/+22.7/+20.2
+active source/applied/desired/actual deg: roll +33.5/+27.2/+22.7/+20.2
+active source/applied/desired/actual deg: roll +26.3/+20.0/+21.7/+20.2
+active source/applied/desired/actual deg: roll +18.8/+12.5/+18.7/+17.7
+active source/applied/desired/actual deg: roll +16.1/+9.8/+15.6/+15.0
+active source/applied/desired/actual deg: roll +17.1/+10.8/+12.6/+11.8
+active source/applied/desired/actual deg: roll +17.8/+11.5/+11.5/+10.5
+active source/applied/desired/actual deg: roll +19.9/+13.6/+13.6/+11.7
+active source/applied/desired/actual deg: roll +20.4/+14.1/+14.1/+12.3
+active source/applied/desired/actual deg: roll +20.4/+14.1/+14.1/+12.6
+active source/applied/desired/actual deg: roll +20.2/+13.9/+13.9/+12.6
+active source/applied/desired/actual deg: roll +19.9/+13.6/+13.0/+11.5
+active source/applied/desired/actual deg: roll +19.1/+12.8/+12.8/+11.5
+active source/applied/desired/actual deg: roll +20.1/+13.8/+13.8/+11.8
+active source/applied/desired/actual deg: roll +20.0/+13.7/+13.7/+12.6
+active source/applied/desired/actual deg: roll +20.0/+13.7/+13.7/+12.6
+active source/applied/desired/actual deg: roll +20.8/+14.5/+14.5/+12.8
+active source/applied/desired/actual deg: roll +21.3/+15.0/+15.0/+13.3
+active source/applied/desired/actual deg: roll +21.1/+14.8/+14.8/+13.3
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.42
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1500 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T144122Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 35 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 15 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints roll \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+4.8 roll=+20.1 yaw=-22.1 elbow=+3.6 wrist=-0.7 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: roll
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=3 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.58  target_age=2 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.74  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=0 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: roll +19.5/+12.7/+12.7/+11.6
+active source/applied/desired/actual deg: roll +19.2/+12.5/+12.5/+11.5
+active source/applied/desired/actual deg: roll +18.8/+12.1/+12.1/+11.3
+active source/applied/desired/actual deg: roll +17.8/+11.0/+11.0/+10.5
+active source/applied/desired/actual deg: roll +22.8/+16.1/+13.1/+11.4
+active source/applied/desired/actual deg: roll +32.5/+25.8/+16.1/+14.0
+active source/applied/desired/actual deg: roll +39.4/+32.7/+19.2/+16.8
+active source/applied/desired/actual deg: roll +47.2/+40.5/+22.2/+19.8
+active source/applied/desired/actual deg: roll +49.7/+43.0/+25.3/+22.6
+active source/applied/desired/actual deg: roll +54.8/+48.1/+27.7/+24.8
+active source/applied/desired/actual deg: roll +57.0/+50.3/+27.7/+24.8
+active source/applied/desired/actual deg: roll +56.5/+49.8/+27.7/+24.8
+active source/applied/desired/actual deg: roll +56.2/+49.5/+27.7/+24.8
+active source/applied/desired/actual deg: roll +48.0/+41.3/+27.7/+24.8
+active source/applied/desired/actual deg: roll +40.3/+33.6/+27.7/+24.8
+active source/applied/desired/actual deg: roll +34.4/+27.7/+27.7/+24.8
+active source/applied/desired/actual deg: roll +28.3/+21.6/+24.7/+23.5
+active source/applied/desired/actual deg: roll +21.3/+14.5/+21.6/+20.3
+active source/applied/desired/actual deg: roll +17.4/+10.7/+18.6/+17.7
+active source/applied/desired/actual deg: roll +17.5/+10.7/+15.5/+15.0
+active source/applied/desired/actual deg: roll +18.5/+11.8/+12.5/+11.6
+active source/applied/desired/actual deg: roll +18.9/+12.2/+12.2/+11.1
+active source/applied/desired/actual deg: roll +18.8/+12.1/+12.1/+11.1
+active source/applied/desired/actual deg: roll +18.9/+12.2/+12.2/+11.1
+active source/applied/desired/actual deg: roll +19.0/+12.3/+12.3/+11.1
+active source/applied/desired/actual deg: roll +18.9/+12.2/+12.2/+11.1
+active source/applied/desired/actual deg: roll +18.9/+12.2/+12.2/+11.1
+active source/applied/desired/actual deg: roll +19.0/+12.3/+12.3/+11.1
+active source/applied/desired/actual deg: roll +19.4/+12.7/+12.7/+11.2
+active source/applied/desired/actual deg: roll +19.5/+12.8/+12.8/+11.2
+active source/applied/desired/actual deg: roll +19.5/+12.8/+12.8/+11.3
+active source/applied/desired/actual deg: roll +19.5/+12.8/+12.8/+11.3
+active source/applied/desired/actual deg: roll +18.2/+11.5/+11.5/+10.8
+active source/applied/desired/actual deg: roll +18.1/+11.4/+11.4/+10.7
+active source/applied/desired/actual deg: roll +18.4/+11.7/+11.7/+10.7
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.95
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1750 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T144242Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 40 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 20 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints roll \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+5.6 roll=+19.3 yaw=-21.9 elbow=+8.8 wrist=-2.1 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: roll
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=2 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=2 ms
+takeover weight=0.43  target_age=4 ms
+takeover weight=0.51  target_age=3 ms
+takeover weight=0.59  target_age=0 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.73  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=0 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: roll +20.4/+12.7/+12.7/+11.6
+active source/applied/desired/actual deg: roll +20.0/+12.3/+12.3/+11.4
+active source/applied/desired/actual deg: roll +19.4/+11.8/+11.8/+11.1
+active source/applied/desired/actual deg: roll +17.6/+9.9/+9.9/+9.2
+active source/applied/desired/actual deg: roll +22.3/+14.7/+10.4/+8.9
+active source/applied/desired/actual deg: roll +33.9/+26.2/+13.4/+11.5
+active source/applied/desired/actual deg: roll +41.2/+33.5/+16.4/+14.1
+active source/applied/desired/actual deg: roll +43.4/+35.8/+19.4/+17.3
+active source/applied/desired/actual deg: roll +43.6/+36.0/+22.4/+20.0
+active source/applied/desired/actual deg: roll +44.1/+36.4/+25.5/+22.6
+active source/applied/desired/actual deg: roll +48.5/+40.9/+28.5/+25.3
+active source/applied/desired/actual deg: roll +52.6/+44.9/+31.5/+28.2
+active source/applied/desired/actual deg: roll +56.4/+48.8/+32.7/+29.5
+active source/applied/desired/actual deg: roll +56.1/+48.5/+32.7/+29.5
+active source/applied/desired/actual deg: roll +48.7/+41.1/+32.7/+29.5
+active source/applied/desired/actual deg: roll +36.8/+29.2/+31.8/+29.5
+active source/applied/desired/actual deg: roll +31.8/+24.2/+28.8/+27.2
+active source/applied/desired/actual deg: roll +23.5/+15.9/+25.7/+24.2
+active source/applied/desired/actual deg: roll +17.6/+10.0/+22.7/+21.7
+active source/applied/desired/actual deg: roll +14.6/+7.0/+19.7/+18.6
+active source/applied/desired/actual deg: roll +15.1/+7.5/+16.7/+15.6
+active source/applied/desired/actual deg: roll +16.5/+8.9/+13.7/+13.0
+active source/applied/desired/actual deg: roll +18.2/+10.5/+10.6/+10.2
+active source/applied/desired/actual deg: roll +19.2/+11.6/+11.6/+10.1
+active source/applied/desired/actual deg: roll +19.1/+11.5/+11.5/+10.3
+active source/applied/desired/actual deg: roll +18.5/+10.8/+10.8/+10.1
+active source/applied/desired/actual deg: roll +18.3/+10.7/+10.7/+10.0
+active source/applied/desired/actual deg: roll +18.2/+10.6/+10.6/+10.0
+active source/applied/desired/actual deg: roll +18.4/+10.8/+10.8/+9.9
+active source/applied/desired/actual deg: roll +18.4/+10.7/+10.7/+9.9
+active source/applied/desired/actual deg: roll +18.3/+10.7/+10.7/+9.9
+active source/applied/desired/actual deg: roll +18.3/+10.7/+10.7/+9.9
+active source/applied/desired/actual deg: roll +18.0/+10.4/+10.4/+9.8
+active source/applied/desired/actual deg: roll +18.0/+10.4/+10.4/+9.8
+active source/applied/desired/actual deg: roll +18.1/+10.4/+10.4/+9.8
+active source/applied/desired/actual deg: roll +18.1/+10.4/+10.4/+9.8
+active source/applied/desired/actual deg: roll +18.3/+10.7/+10.7/+9.8
+active source/applied/desired/actual deg: roll +18.1/+10.5/+10.5/+9.8
+active source/applied/desired/actual deg: roll +18.5/+10.8/+10.8/+9.8
+active source/applied/desired/actual deg: roll +18.4/+10.8/+10.8/+9.8
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.33
+release weight=0.26
+release weight=0.19
+release weight=0.13
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 2000 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T144409Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 40 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 20 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints roll \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=-0.8 roll=+18.4 yaw=-23.7 elbow=+11.3 wrist=-0.5 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: roll
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=4 ms
+takeover weight=0.01  target_age=2 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=0 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.59  target_age=0 ms
+takeover weight=0.66  target_age=0 ms
+takeover weight=0.74  target_age=1 ms
+takeover weight=0.80  target_age=2 ms
+takeover weight=0.86  target_age=0 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=0 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: roll +17.9/+12.7/+12.7/+11.6
+active source/applied/desired/actual deg: roll +16.7/+11.5/+11.5/+10.9
+active source/applied/desired/actual deg: roll +15.5/+10.3/+10.3/+9.7
+active source/applied/desired/actual deg: roll +17.9/+12.7/+11.2/+9.5
+active source/applied/desired/actual deg: roll +24.5/+19.3/+14.2/+12.1
+active source/applied/desired/actual deg: roll +28.7/+23.5/+17.2/+15.4
+active source/applied/desired/actual deg: roll +33.2/+28.0/+20.3/+17.9
+active source/applied/desired/actual deg: roll +37.2/+32.0/+23.3/+20.5
+active source/applied/desired/actual deg: roll +42.5/+37.3/+26.4/+23.5
+active source/applied/desired/actual deg: roll +45.8/+40.6/+29.4/+26.4
+active source/applied/desired/actual deg: roll +47.1/+41.9/+32.4/+29.2
+active source/applied/desired/actual deg: roll +50.5/+45.3/+32.7/+29.6
+active source/applied/desired/actual deg: roll +47.4/+42.2/+32.7/+29.6
+active source/applied/desired/actual deg: roll +37.9/+32.7/+32.7/+29.6
+active source/applied/desired/actual deg: roll +31.6/+26.4/+29.7/+28.3
+active source/applied/desired/actual deg: roll +21.2/+16.0/+26.6/+25.0
+active source/applied/desired/actual deg: roll +13.3/+8.1/+23.5/+22.3
+active source/applied/desired/actual deg: roll +14.0/+8.8/+20.5/+19.6
+active source/applied/desired/actual deg: roll +14.7/+9.5/+17.5/+16.5
+active source/applied/desired/actual deg: roll +15.3/+10.1/+14.4/+13.6
+active source/applied/desired/actual deg: roll +16.6/+11.4/+11.5/+11.0
+active source/applied/desired/actual deg: roll +17.0/+11.8/+11.8/+10.5
+active source/applied/desired/actual deg: roll +16.6/+11.4/+11.4/+10.6
+active source/applied/desired/actual deg: roll +16.8/+11.6/+11.6/+10.6
+active source/applied/desired/actual deg: roll +16.8/+11.6/+11.6/+10.6
+active source/applied/desired/actual deg: roll +16.7/+11.5/+11.5/+10.6
+active source/applied/desired/actual deg: roll +16.9/+11.7/+11.7/+10.6
+active source/applied/desired/actual deg: roll +16.7/+11.5/+11.5/+10.6
+active source/applied/desired/actual deg: roll +16.6/+11.4/+11.4/+10.6
+active source/applied/desired/actual deg: roll +16.8/+11.6/+11.6/+10.6
+active source/applied/desired/actual deg: roll +16.6/+11.4/+11.4/+10.6
+active source/applied/desired/actual deg: roll +16.7/+11.5/+11.5/+10.6
+active source/applied/desired/actual deg: roll +17.4/+12.2/+12.2/+10.7
+active source/applied/desired/actual deg: roll +16.9/+11.7/+11.7/+10.7
+active source/applied/desired/actual deg: roll +17.0/+11.8/+11.8/+10.7
+active source/applied/desired/actual deg: roll +16.9/+11.7/+11.7/+10.7
+active source/applied/desired/actual deg: roll +17.0/+11.8/+11.8/+10.7
+active source/applied/desired/actual deg: roll +17.0/+11.8/+11.8/+10.7
+active source/applied/desired/actual deg: roll +17.0/+11.8/+11.8/+10.7
+active source/applied/desired/actual deg: roll +17.1/+11.9/+11.9/+10.7
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+[Reader] take sample error
+Saved 2000 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T144535Z.csv

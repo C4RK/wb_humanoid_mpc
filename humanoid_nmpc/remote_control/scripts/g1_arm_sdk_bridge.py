@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 import math
 import os
 import socket
+import statistics
 import struct
 import threading
 import time
@@ -34,6 +35,8 @@ ARM_SDK_WEIGHT = 29
 CONTROL_PERIOD = 0.02
 KP = 60.0
 KD = 1.5
+TAKEOVER_DURATION = 20.0
+RELEASE_SECONDS_PER_UNIT_WEIGHT = 20.0
 
 LEFT_ARM = (
     (15, "pitch", (-3.0892, 2.6704)),
@@ -179,8 +182,13 @@ def validate_tracking_state(state: LowState_, desired, args) -> None:
             f"limit is {args.max_tilt_deg:.1f} deg"
         )
 
+    held_joint_indices = BODY_AND_HELD_JOINTS + tuple(
+        index
+        for index, name, _limits in LEFT_ARM
+        if name not in args.active_joint_names
+    )
     fastest_body_index = max(
-        BODY_AND_HELD_JOINTS,
+        held_joint_indices,
         key=lambda index: abs(state.motor_state[index].dq),
     )
     body_speed = abs(state.motor_state[fastest_body_index].dq)
@@ -191,8 +199,13 @@ def validate_tracking_state(state: LowState_, desired, args) -> None:
             f"limit is {args.max_body_speed_rad_s:.2f} rad/s"
         )
 
+    active_arm_indices = tuple(
+        index
+        for index, name, _limits in LEFT_ARM
+        if name in args.active_joint_names
+    )
     fastest_arm_index = max(
-        LEFT_ARM_JOINTS,
+        active_arm_indices,
         key=lambda index: abs(state.motor_state[index].dq),
     )
     arm_speed = abs(state.motor_state[fastest_arm_index].dq)
@@ -244,6 +257,70 @@ def map_target_to_robot(target, baseline_target, initial, relative_to_start,
         else:
             mapped.append(float(value))
     return tuple(mapped)
+
+
+def bound_target_to_safe_range(applied_target, initial, max_excursion_by_name):
+    """Intersect the per-run excursion envelope with absolute URDF limits."""
+    bounded_target = []
+    for value, (index, name, limits) in zip(applied_target, LEFT_ARM):
+        max_excursion = max_excursion_by_name[name]
+        safe_lower = max(limits[0], initial[index] - max_excursion)
+        safe_upper = min(limits[1], initial[index] + max_excursion)
+        bounded_target.append(min(max(value, safe_lower), safe_upper))
+    bounded_target = tuple(bounded_target)
+    validate_target(bounded_target)
+    return bounded_target
+
+
+def stable_target_from_samples(samples, active_joint_names,
+                               tolerance_rad, minimum_samples=10):
+    """Return a median target after verifying a quiet human pose.
+
+    Only active joints participate in the stability gate.  Inactive joints are
+    still included in the returned five-value target so the normal mapping
+    code can keep them at the measured takeover posture.
+    """
+    if len(samples) < minimum_samples:
+        raise RuntimeError(
+            "too few fresh target samples during the alignment stability "
+            f"window ({len(samples)} received; need {minimum_samples})"
+        )
+
+    representative = tuple(
+        float(statistics.median(sample[column] for sample in samples))
+        for column in range(len(LEFT_ARM))
+    )
+    for column, (_index, name, _limits) in enumerate(LEFT_ARM):
+        if name not in active_joint_names:
+            continue
+        maximum_deviation = max(
+            abs(float(sample[column]) - representative[column])
+            for sample in samples
+        )
+        if maximum_deviation > tolerance_rad:
+            raise RuntimeError(
+                f"human {name} target was not stable during takeover "
+                f"(maximum deviation {math.degrees(maximum_deviation):.1f} deg; "
+                f"limit {math.degrees(tolerance_rad):.1f} deg)"
+            )
+    return representative
+
+
+def maximum_active_target_difference(first, second, active_joint_names):
+    """Return the largest named active-joint difference between two targets."""
+    differences = [
+        (abs(float(a) - float(b)), name)
+        for a, b, (_index, name, _limits) in zip(first, second, LEFT_ARM)
+        if name in active_joint_names
+    ]
+    return max(differences, default=(0.0, "none"))
+
+
+def step_desired_arm_toward(desired, target, max_step):
+    """Rate-limit one control-period step toward a five-joint arm target."""
+    for value, (index, _name, _limits) in zip(target, LEFT_ARM):
+        difference = float(value) - float(desired[index])
+        desired[index] += min(max(difference, -max_step), max_step)
 
 
 def fill_command(command, desired, weight: float) -> None:
@@ -360,13 +437,13 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
     )
     validate_target(first_target)
 
-    max_excursion = math.radians(args.max_excursion_deg)
     for value, (index, name, _limits) in zip(first_target, LEFT_ARM):
         difference = abs(value - initial[index])
+        max_excursion = args.max_excursion_by_name[name]
         if difference > max_excursion:
             raise RuntimeError(
                 f"initial {name} target differs by {math.degrees(difference):.1f} deg; "
-                f"limit is {args.max_excursion_deg:.1f} deg"
+                f"limit is {math.degrees(max_excursion):.1f} deg"
             )
 
     source_text = " ".join(
@@ -384,8 +461,26 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
             f"the measured robot pose: {applied_text} deg"
         )
     print("Active tracked joints: " + ", ".join(sorted(args.active_joint_names)))
-    confirmation = input("Type TRACK and press Enter to enable physical arm tracking: ")
-    if confirmation != "TRACK":
+    print(
+        "Per-joint excursion limits: "
+        + " ".join(
+            f"{name}={math.degrees(args.max_excursion_by_name[name]):.1f}"
+            for name in LEFT_ARM_NAMES
+        )
+        + " deg"
+    )
+    if args.absolute_alignment:
+        print(
+            "ABSOLUTE ALIGNMENT is ENABLED. Keep the current human pose still "
+            "through takeover and robot alignment."
+        )
+        confirmation_word = "ALIGN"
+    else:
+        confirmation_word = "TRACK"
+    confirmation = input(
+        f"Type {confirmation_word} and press Enter to enable physical arm tracking: "
+    )
+    if confirmation != confirmation_word:
         print("Tracking cancelled. No command publisher was created.")
         return
 
@@ -394,14 +489,33 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
     command = unitree_hg_msg_dds__LowCmd_()
     crc = CRC()
     max_step = math.radians(args.max_rate_deg_s) * CONTROL_PERIOD
+    alignment_max_step = (
+        math.radians(args.alignment_rate_deg_s) * CONTROL_PERIOD
+    )
     current_weight = 0.0
+    alignment_samples = []
+    last_alignment_sequence = None
 
     try:
         started = time.monotonic()
         next_tick = started
-        while time.monotonic() - started < 2.0:
+        next_log = started
+        while time.monotonic() - started < TAKEOVER_DURATION:
             now = time.monotonic()
-            progress = (now - started) / 2.0
+            progress = (now - started) / TAKEOVER_DURATION
+            target_receiver.update()
+            if target_receiver.age() > args.target_timeout:
+                raise RuntimeError(
+                    "target stream became stale during arm_sdk takeover "
+                    f"({target_receiver.age():.3f} s)"
+                )
+            validate_target(target_receiver.target)
+            if (args.absolute_alignment and
+                    now - started >=
+                    TAKEOVER_DURATION - args.alignment_stability_seconds and
+                    target_receiver.sequence != last_alignment_sequence):
+                alignment_samples.append(tuple(target_receiver.target))
+                last_alignment_sequence = target_receiver.sequence
             state, state_time = state_receiver.snapshot()
             if state is None or now - state_time > 0.2:
                 raise RuntimeError("LowState stream timed out during arm_sdk takeover")
@@ -410,9 +524,165 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
             publish_command(
                 publisher, command, crc, desired, current_weight
             )
-            target_receiver.update()
+            if now >= next_log:
+                print(
+                    f"takeover weight={current_weight:.2f}  "
+                    f"target_age={target_receiver.age() * 1000.0:.0f} ms"
+                )
+                next_log = now + 1.0
             next_tick += CONTROL_PERIOD
             time.sleep(max(0.0, next_tick - time.monotonic()))
+
+        # Relative tracking should start from the human pose at the end of the
+        # slow takeover.  Small posture changes while control authority is
+        # being blended in must not become queued robot motion.
+        target_receiver.update()
+        if target_receiver.age() > args.target_timeout:
+            raise RuntimeError(
+                "target stream became stale at the end of arm_sdk takeover "
+                f"({target_receiver.age():.3f} s)"
+            )
+        validate_target(target_receiver.target)
+        if args.relative_to_start:
+            baseline_target = tuple(target_receiver.target)
+            print(
+                "Relative target baseline refreshed at the end of takeover; "
+                "tracking starts from the current human pose."
+            )
+
+        if args.absolute_alignment:
+            frozen_source_target = stable_target_from_samples(
+                alignment_samples,
+                args.active_joint_names,
+                math.radians(args.alignment_stability_deg),
+            )
+            frozen_alignment_target = map_target_to_robot(
+                frozen_source_target,
+                frozen_source_target,
+                initial,
+                False,
+                args.active_joint_names,
+            )
+            validate_target(frozen_alignment_target)
+            for value, (index, name, _limits) in zip(
+                    frozen_alignment_target, LEFT_ARM):
+                difference = abs(value - initial[index])
+                limit = args.max_excursion_by_name[name]
+                if difference > limit:
+                    raise RuntimeError(
+                        f"stable absolute {name} target differs from the "
+                        f"takeover pose by {math.degrees(difference):.1f} deg; "
+                        f"limit is {math.degrees(limit):.1f} deg"
+                    )
+
+            alignment_text = " ".join(
+                f"{name}={math.degrees(value):+.1f}"
+                for value, (_index, name, _limits) in zip(
+                    frozen_alignment_target, LEFT_ARM)
+                if name in args.active_joint_names
+            )
+            print(
+                "Takeover complete. Aligning the robot to the frozen absolute "
+                f"target at no more than {args.alignment_rate_deg_s:.1f} deg/s: "
+                f"{alignment_text} deg"
+            )
+            print("Keep the human pose still until ABSOLUTE ALIGNMENT COMPLETE.")
+
+            alignment_started = time.monotonic()
+            aligned_since = None
+            next_tick = alignment_started
+            next_log = alignment_started
+            while True:
+                now = time.monotonic()
+                if now - alignment_started > args.alignment_timeout:
+                    raise RuntimeError(
+                        "absolute alignment timed out after "
+                        f"{args.alignment_timeout:.1f} s"
+                    )
+
+                target_receiver.update()
+                if target_receiver.age() > args.target_timeout:
+                    raise RuntimeError(
+                        "target stream became stale during absolute alignment "
+                        f"({target_receiver.age():.3f} s)"
+                    )
+                validate_target(target_receiver.target)
+                source_motion, source_motion_name = (
+                    maximum_active_target_difference(
+                        target_receiver.target,
+                        frozen_source_target,
+                        args.active_joint_names,
+                    )
+                )
+                if source_motion > math.radians(args.alignment_hold_deg):
+                    raise RuntimeError(
+                        f"human {source_motion_name} moved by "
+                        f"{math.degrees(source_motion):.1f} deg during absolute "
+                        f"alignment; limit is {args.alignment_hold_deg:.1f} deg"
+                    )
+
+                state, state_time = state_receiver.snapshot()
+                if state is None or now - state_time > 0.2:
+                    raise RuntimeError(
+                        "LowState stream timed out during absolute alignment"
+                    )
+                validate_tracking_state(state, desired, args)
+
+                step_desired_arm_toward(
+                    desired, frozen_alignment_target, alignment_max_step)
+                publish_command(publisher, command, crc, desired, 1.0)
+                current_weight = 1.0
+                append_tracking_log(
+                    tracking_records, state, desired, target_receiver,
+                    frozen_alignment_target,
+                )
+
+                actual_error, actual_error_name = max(
+                    (
+                        abs(state.motor_state[index].q - value),
+                        name,
+                    )
+                    for value, (index, name, _limits) in zip(
+                        frozen_alignment_target, LEFT_ARM)
+                    if name in args.active_joint_names
+                )
+                command_error, _command_error_name = max(
+                    (
+                        abs(desired[index] - value),
+                        name,
+                    )
+                    for value, (index, name, _limits) in zip(
+                        frozen_alignment_target, LEFT_ARM)
+                    if name in args.active_joint_names
+                )
+                within_tolerance = (
+                    actual_error <= math.radians(args.alignment_tolerance_deg)
+                    and command_error <= math.radians(0.1)
+                )
+                if within_tolerance:
+                    if aligned_since is None:
+                        aligned_since = now
+                    elif now - aligned_since >= args.alignment_settle_seconds:
+                        break
+                else:
+                    aligned_since = None
+
+                if now >= next_log:
+                    print(
+                        "aligning absolute target: "
+                        f"worst actual error={math.degrees(actual_error):.1f} deg "
+                        f"({actual_error_name}); "
+                        f"human hold error={math.degrees(source_motion):.1f} deg"
+                    )
+                    next_log = now + 1.0
+
+                next_tick += CONTROL_PERIOD
+                time.sleep(max(0.0, next_tick - time.monotonic()))
+
+            print(
+                "ABSOLUTE ALIGNMENT COMPLETE; the same retargeted pose now maps "
+                "to the same robot joint target."
+            )
 
         print("arm_sdk enabled; tracking ROS targets.")
         started = time.monotonic()
@@ -439,13 +709,9 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
                 args.relative_to_start,
                 args.active_joint_names,
             )
-            validate_target(applied_target)
-            for value, (index, _name, limits) in zip(applied_target, LEFT_ARM):
-                safe_lower = max(limits[0], initial[index] - max_excursion)
-                safe_upper = min(limits[1], initial[index] + max_excursion)
-                bounded = min(max(value, safe_lower), safe_upper)
-                difference = bounded - desired[index]
-                desired[index] += min(max(difference, -max_step), max_step)
+            bounded_target = bound_target_to_safe_range(
+                applied_target, initial, args.max_excursion_by_name)
+            step_desired_arm_toward(desired, bounded_target, max_step)
 
             publish_command(publisher, command, crc, desired, 1.0)
             current_weight = 1.0
@@ -456,12 +722,29 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
 
             if now >= next_log:
                 pairs = []
-                for index, name, _limits in LEFT_ARM:
-                    pairs.append(
-                        f"{name} {math.degrees(desired[index]):+.1f}/"
-                        f"{math.degrees(state.motor_state[index].q):+.1f}"
-                    )
-                print("desired/actual deg: " + "  ".join(pairs))
+                for source_value, applied_value, bounded_value, (
+                        index, name, _limits) in zip(
+                            target_receiver.target,
+                            applied_target,
+                            bounded_target,
+                            LEFT_ARM):
+                    if name in args.active_joint_names:
+                        clipped = (
+                            abs(float(applied_value) - float(bounded_value)) > 1e-9
+                        )
+                        pairs.append(
+                            f"{name} "
+                            f"{math.degrees(source_value):+.1f}/"
+                            f"{math.degrees(applied_value):+.1f}/"
+                            f"{math.degrees(bounded_value):+.1f}/"
+                            f"{math.degrees(desired[index]):+.1f}/"
+                            f"{math.degrees(state.motor_state[index].q):+.1f}"
+                            + (" CLIPPED" if clipped else "")
+                        )
+                print(
+                    "active source/applied/bounded/desired/actual deg: "
+                    + "  ".join(pairs)
+                )
                 next_log = now + 1.0
 
             next_tick += CONTROL_PERIOD
@@ -476,17 +759,27 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
                 for index in CONTROLLED_JOINTS
             }
         release_start_weight = current_weight
+        release_duration = max(
+            3.0,
+            RELEASE_SECONDS_PER_UNIT_WEIGHT * release_start_weight,
+        )
         started = time.monotonic()
         next_tick = started
-        while time.monotonic() - started < 2.0:
-            progress = (time.monotonic() - started) / 2.0
+        next_log = started
+        while time.monotonic() - started < release_duration:
+            now = time.monotonic()
+            progress = (now - started) / release_duration
+            release_weight = release_start_weight * (1.0 - smoothstep(progress))
             publish_command(
                 publisher,
                 command,
                 crc,
                 release_pose,
-                release_start_weight * (1.0 - smoothstep(progress)),
+                release_weight,
             )
+            if now >= next_log:
+                print(f"release weight={release_weight:.2f}")
+                next_log = now + 1.0
             next_tick += CONTROL_PERIOD
             time.sleep(max(0.0, next_tick - time.monotonic()))
         for _ in range(5):
@@ -506,20 +799,89 @@ def main() -> int:
         default=15.0,
         help="tracking duration in seconds; <=0 runs until Ctrl+C",
     )
-    parser.add_argument("--target-timeout", type=float, default=0.25)
+    parser.add_argument("--target-timeout", type=float, default=0.50)
     parser.add_argument("--max-rate-deg-s", type=float, default=15.0)
-    parser.add_argument("--max-excursion-deg", type=float, default=20.0)
+    parser.add_argument(
+        "--max-excursion-deg",
+        type=float,
+        default=20.0,
+        help=(
+            "fallback excursion limit in degrees for every active joint; "
+            "a per-joint option overrides it"
+        ),
+    )
+    for joint_name in LEFT_ARM_NAMES:
+        parser.add_argument(
+            f"--max-excursion-{joint_name}-deg",
+            type=float,
+            default=None,
+            help=(
+                f"excursion limit in degrees for {joint_name}; defaults to "
+                "--max-excursion-deg"
+            ),
+        )
     parser.add_argument("--max-tilt-deg", type=float, default=10.0)
-    parser.add_argument("--max-body-speed-rad-s", type=float, default=0.5)
+    parser.add_argument("--max-body-speed-rad-s", type=float, default=0.3)
     parser.add_argument("--max-observed-arm-speed-deg-s", type=float, default=60.0)
     parser.add_argument("--max-tracking-error-deg", type=float, default=15.0)
-    parser.add_argument(
+    mapping_group = parser.add_mutually_exclusive_group()
+    mapping_group.add_argument(
         "--relative-to-start",
         action="store_true",
         help=(
             "map the first fresh ROS target to the measured robot posture and "
             "track only subsequent target changes"
         ),
+    )
+    mapping_group.add_argument(
+        "--absolute-alignment",
+        action="store_true",
+        help=(
+            "after takeover, slowly align active joints to a stable absolute "
+            "ROS target before enabling live absolute tracking"
+        ),
+    )
+    parser.add_argument(
+        "--alignment-rate-deg-s",
+        type=float,
+        default=2.0,
+        help="maximum active-joint speed during absolute startup alignment",
+    )
+    parser.add_argument(
+        "--alignment-stability-seconds",
+        type=float,
+        default=2.0,
+        help="quiet target window collected at the end of takeover",
+    )
+    parser.add_argument(
+        "--alignment-stability-deg",
+        type=float,
+        default=2.0,
+        help="maximum target deviation allowed in the quiet window",
+    )
+    parser.add_argument(
+        "--alignment-hold-deg",
+        type=float,
+        default=4.0,
+        help="maximum human target motion allowed while the robot aligns",
+    )
+    parser.add_argument(
+        "--alignment-tolerance-deg",
+        type=float,
+        default=2.0,
+        help="actual robot error required to finish absolute alignment",
+    )
+    parser.add_argument(
+        "--alignment-settle-seconds",
+        type=float,
+        default=1.0,
+        help="time the robot must remain within alignment tolerance",
+    )
+    parser.add_argument(
+        "--alignment-timeout",
+        type=float,
+        default=90.0,
+        help="maximum absolute-alignment time after takeover",
     )
     parser.add_argument(
         "--active-joints",
@@ -534,7 +896,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--log-dir",
-        default="~/humanoid_mpc_ws/calibration_logs",
+        default="~/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs",
         help="directory for the full-rate real-robot tracking CSV",
     )
     parser.add_argument(
@@ -545,6 +907,13 @@ def main() -> int:
     args = parser.parse_args()
     args.active_joint_names = frozenset(args.active_joints)
 
+    if args.execute and not (args.relative_to_start or args.absolute_alignment):
+        parser.error(
+            "--execute requires an explicit mapping mode: use "
+            "--relative-to-start for commissioning or --absolute-alignment "
+            "for pose-following"
+        )
+
     positive_limits = {
         "--max-rate-deg-s": args.max_rate_deg_s,
         "--max-excursion-deg": args.max_excursion_deg,
@@ -552,10 +921,34 @@ def main() -> int:
         "--max-body-speed-rad-s": args.max_body_speed_rad_s,
         "--max-observed-arm-speed-deg-s": args.max_observed_arm_speed_deg_s,
         "--max-tracking-error-deg": args.max_tracking_error_deg,
+        "--alignment-rate-deg-s": args.alignment_rate_deg_s,
+        "--alignment-stability-seconds": args.alignment_stability_seconds,
+        "--alignment-stability-deg": args.alignment_stability_deg,
+        "--alignment-hold-deg": args.alignment_hold_deg,
+        "--alignment-tolerance-deg": args.alignment_tolerance_deg,
+        "--alignment-settle-seconds": args.alignment_settle_seconds,
+        "--alignment-timeout": args.alignment_timeout,
     }
     for name, value in positive_limits.items():
         if not math.isfinite(value) or value <= 0.0:
             parser.error(f"{name} must be a positive finite value")
+    if args.alignment_stability_seconds >= TAKEOVER_DURATION:
+        parser.error(
+            f"--alignment-stability-seconds must be less than the "
+            f"{TAKEOVER_DURATION:.0f}-second takeover duration"
+        )
+
+    args.max_excursion_by_name = {}
+    for joint_name in LEFT_ARM_NAMES:
+        option_name = f"--max-excursion-{joint_name}-deg"
+        override = getattr(args, f"max_excursion_{joint_name}_deg")
+        if override is not None:
+            if not math.isfinite(override) or override <= 0.0:
+                parser.error(f"{option_name} must be a positive finite value")
+            limit_deg = override
+        else:
+            limit_deg = args.max_excursion_deg
+        args.max_excursion_by_name[joint_name] = math.radians(limit_deg)
 
     ChannelFactoryInitialize(0, args.interface)
     state_receiver = StateReceiver()
@@ -594,42 +987,49 @@ def main() -> int:
             validate_target(applied_target)
 
             print("DRY RUN: fresh target received; no command publisher was created.")
-            mode = "relative-to-start" if args.relative_to_start else "absolute"
+            if args.relative_to_start:
+                mode = "relative-to-start"
+            elif args.absolute_alignment:
+                mode = "absolute-alignment"
+            else:
+                mode = "absolute preview"
             print(f"  mapping mode: {mode}")
             print("  active tracked joints: " + ", ".join(
                 sorted(args.active_joint_names)))
             print(
-                "  joint                 actual     source    applied   difference"
+                "  joint                 actual     source    applied   difference     limit"
             )
-            maximum_difference = 0.0
-            maximum_name = ""
+            violations = []
             for source_value, applied_value, (index, name, _limits) in zip(
                     source_target, applied_target, LEFT_ARM):
                 actual = float(state.motor_state[index].q)
                 difference = abs(float(applied_value) - actual)
-                if difference > maximum_difference:
-                    maximum_difference = difference
-                    maximum_name = name
+                limit = args.max_excursion_by_name[name]
+                if difference > limit:
+                    violations.append((name, difference, limit))
                 print(
                     f"  {name:<20}"
                     f"{math.degrees(actual):+8.1f} deg"
                     f"{math.degrees(source_value):+9.1f} deg"
                     f"{math.degrees(applied_value):+9.1f} deg"
                     f"{math.degrees(difference):9.1f} deg"
+                    f"{math.degrees(limit):9.1f} deg"
                 )
 
-            maximum_difference_deg = math.degrees(maximum_difference)
-            if maximum_difference_deg > args.max_excursion_deg:
+            if violations:
+                violation_text = ", ".join(
+                    f"{name} {math.degrees(difference):.1f}>"
+                    f"{math.degrees(limit):.1f} deg"
+                    for name, difference, limit in violations
+                )
                 print(
                     "DRY-RUN RESULT: FAIL - "
-                    f"{maximum_name} differs by {maximum_difference_deg:.1f} deg; "
-                    f"limit is {args.max_excursion_deg:.1f} deg."
+                    f"initial differences exceed limits: {violation_text}."
                 )
                 return 1
             print(
-                "DRY-RUN RESULT: PASS - maximum initial difference is "
-                f"{maximum_difference_deg:.1f} deg "
-                f"(limit {args.max_excursion_deg:.1f} deg)."
+                "DRY-RUN RESULT: PASS - all initial differences are within "
+                "their per-joint excursion limits."
             )
             return 0
 

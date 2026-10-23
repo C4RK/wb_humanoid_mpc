@@ -503,8 +503,9 @@ python3 humanoid_nmpc/remote_control/scripts/g1_fixed_arm_test.py \
 MOVE
 ```
 
-程序用 2 秒接管、3 秒移动约 +5°、保持 1 秒、3 秒返回，再用 2 秒将 Arm SDK 权重降到
-零。通过条件是左肘方向正确、机器人身体稳定、另一只手臂没有异常动作，并最终出现：
+程序用 20 秒缓慢接管、3 秒移动约 +5°、保持 1 秒、3 秒返回，再根据当时的 Arm SDK
+权重用最多 20 秒缓慢降到零。通过条件是左肘方向正确、机器人身体稳定、另一只手臂没有
+异常动作，并最终出现：
 
 ```text
 Fixed arm test completed; arm_sdk weight returned to zero.
@@ -514,6 +515,29 @@ Fixed arm test completed; arm_sdk weight returned to zero.
 
 “执行固定动作”是预先写死的左肘 +5° 测试，不读取人体动作，也不是电磁重定向。它的目的
 是先独立证明电脑到 `rt/arm_sdk` 的实机控制方向、接管和释放都正确。
+
+### 9.3 接管阶段出现非目标关节速度时
+
+如果固定动作在 `takeover` 阶段因为另一只手臂的关节速度而停止，不要放宽
+`0.30 rad/s` 保护阈值，也不要直接重复固定动作。`rt/arm_sdk` 的权重会同时影响
+左右手臂，因此先运行零动作、低权重接管诊断：
+
+```bash
+python3 humanoid_nmpc/remote_control/scripts/g1_fixed_arm_test.py \
+  enx6c1ff701509c \
+  --takeover-diagnostic \
+  --diagnostic-max-weight 0.10 \
+  --execute
+```
+
+运行前仍需确认吊架、急停、周围空间和 FSM 4。看到提示后输入 `DIAGNOSE`。诊断过程不改变
+任何关节目标。程序按每单位权重 20 秒自动延长接管和释放时间：`0.10` 至 `0.25` 至少使用
+5 秒，`0.50` 使用 10 秒，`0.75` 使用 15 秒，`1.00` 使用 20 秒；到达目标权重后保持 2 秒。
+程序会
+继续使用 `0.30 rad/s` 速度保护和 `2°` 零动作位移保护，并在结束或提前停止时列出每个上身
+关节的峰值速度和峰值位移。权重按 `0.10 → 0.20 → 0.25 → 0.50 → 0.75 → 1.00`
+逐级测试，每一级结果经过检查后再继续，不要自行跳级。完整权重零动作诊断通过后，才能继续
+固定动作测试。
 
 ## 10. 手柄进入 FSM 500
 
@@ -597,7 +621,7 @@ Docker ROS 2 /arm_joint_target
 ```
 
 UDP 本身不保证每个包都到达，所以发送包包含序号和时间戳，安全桥还要求目标年龄不超过
-250 ms；流中断时安全桥停止跟随并释放 Arm SDK 权重。它没有把电磁数据直接通过互联网
+500 ms；流中断时安全桥停止跟随并释放 Arm SDK 权重。它没有把电磁数据直接通过互联网
 发送到机器人。
 
 ### 11.3 宿主机 BRIDGE：完整链路 dry-run
@@ -654,7 +678,8 @@ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
   --duration 10 \
   --max-rate-deg-s 5 \
   --max-excursion-deg 15 \
-  --target-timeout 0.25 \
+  --max-body-speed-rad-s 0.30 \
+  --target-timeout 0.50 \
   --relative-to-start \
   --active-joints elbow \
   --execute
@@ -665,7 +690,8 @@ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
 - `--duration 10`：接管完成后只跟随 10 秒；
 - `--max-rate-deg-s 5`：每个受控关节命令变化最多 5°/s；
 - `--max-excursion-deg 15`：每个目标最多偏离机器人接管姿态 15°；
-- `--target-timeout 0.25`：250 ms 没有新目标就停止；
+- `--max-body-speed-rad-s 0.30`：腿、腰、右臂和未启用的左臂关节超过该速度即停止；
+- `--target-timeout 0.50`：500 ms 没有新目标就停止，允许双接收器同步产生的短暂空档；
 - `--relative-to-start`：把第一帧人体目标对齐到机器人当前姿态，只跟踪后续相对变化；
 - `--active-joints elbow`：本轮只让左肘跟随，肩和腕保持接管时角度；
 - `--execute`：允许建立 `rt/arm_sdk` publisher，因此这一条会让实机运动。
@@ -675,6 +701,12 @@ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
 ```text
 TRACK
 ```
+
+输入后人体继续保持 DOWN。程序用 20 秒将 Arm SDK 权重从零缓慢升到 1；接管期间仍持续
+检查 UDP 目标是否新鲜。相对模式会在接管完成时用最新人体目标重新设置基准，因此接管期间
+正常呼吸和小幅姿态变化不会积累成待执行动作。看到
+`arm_sdk enabled; tracking ROS targets.` 后，10 秒跟随计时才开始，之后的动作才会被跟踪。
+结束或安全检查触发后，程序根据当时权重用最多 20 秒缓慢释放。
 
 十秒动作时间表：
 
@@ -691,7 +723,7 @@ IMU 倾斜、身体与保持关节速度、左臂速度和跟踪误差；异常�
 
 ```text
 arm_sdk enabled; tracking ROS targets.
-desired/actual deg: ...
+active source/applied/bounded/desired/actual deg: ...
 Releasing arm_sdk control...
 arm_sdk weight returned to zero.
 Saved ... full-rate real-robot tracking samples to ...csv
@@ -714,7 +746,7 @@ Saved ... full-rate real-robot tracking samples to ...csv
 
 - `/wb_humanoid_mpc_ws/calibration_logs/dual_reference_*.npz`；
 - `/wb_humanoid_mpc_ws/calibration_logs/dual_retargeting_*.npz`；
-- `~/humanoid_mpc_ws/calibration_logs/g1_arm_tracking_*.csv`；
+- `~/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_*.csv`；
 - 标定、重定向、UDP、安全桥和 FSM 终端输出；
 - 固定视角现场视频。
 
@@ -743,3 +775,272 @@ shoulder roll 和腕 roll。完整 90° 动作、行走以及本项目全身 MPC
   <https://github.com/jiakefu9-hub/hold-my-beer-mpc/blob/main/docs/g1_field_validation/sessions/20260916_A3_HARDWARE.md>
 - Unitree 当前手柄模式和 `rt/arm_sdk` weight 说明：
   <https://github.com/unitreerobotics/xr_teleoperate/wiki/Motion>
+
+## 16. 已归档的预实验
+
+- [2026-10-22 G1 左臂实时重定向预实验记录](records/2026-10-22_real_robot_pretest/README_zh.md)：
+  包含 33 份实机 CSV 的统计、一次安全中止、当天 7 份标定原始数据、终端记录和文件校验值。
+- [2026-10-23 G1 左臂逐级扩大范围测试](records/2026-10-23_real_robot_range_test/README_zh.md)：
+  包含三档分关节安全包络的四次运行、一次目标流超时停止、逐关节跟踪误差和数据连续性统计。
+
+## 17. 五关节通过 20° 后的功能动作测试
+
+### 17.1 五个电机是否同时变化
+
+安全桥以 50 Hz 运行，每 20 ms 把腰部、左右臂保持目标和已启用的左臂目标写进同一个
+`rt/arm_sdk` 命令包。因此，`--active-joints pitch roll yaw elbow wrist` 时，五个左臂关节
+在同一个控制周期收到目标。腿部不由这个桥控制，继续由 FSM 500 负责平衡。
+
+五个关节不会被强制走完全相同的轨迹。人体每个关节的变化量不同，每个关节分别经过幅度
+限制和 `--max-rate-deg-s` 速度限制；机器人各电机的负载和响应也不同。所以它们可以同时
+开始更新，但停止时间、峰值角度和实际跟踪误差可以不同。未列入 `--active-joints` 的左臂
+关节以及右臂和腰部保持接管时的角度。
+
+### 17.2 本轮目标
+
+已经完成五关节 5°、10°、15° 和 20° 的相对跟随验证后，下一步做一次中等范围的功能
+动作序列，检查关节组合、动作换向和躯干碰撞。先使用以下分关节上限：
+
+- pitch：20°；
+- roll：20°；
+- yaw：15°；
+- elbow：30°；
+- wrist：20°；
+- 所有关节命令限速：5°/s。
+
+这些角度都是相对于接管结束时机器人姿态的最大变化量，不是机器人的绝对关节角。
+
+### 17.3 先做 dry-run
+
+确认 RETARGET-REAL 和 UDP sender 连续输出、机器人保持 FSM 500 后，在宿主机运行：
+
+```bash
+conda activate unitree-rl
+cd ~/humanoid_mpc_ws/src/wb_humanoid_mpc
+
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --relative-to-start \
+  --active-joints pitch roll yaw elbow wrist \
+  --max-excursion-pitch-deg 20 \
+  --max-excursion-roll-deg 20 \
+  --max-excursion-yaw-deg 15 \
+  --max-excursion-elbow-deg 30 \
+  --max-excursion-wrist-deg 20
+```
+
+这一条没有 `--execute`，机器人不会运动。必须看到五行关节信息以及
+`DRY-RUN RESULT: PASS`。
+
+### 17.4 实机功能序列
+
+dry-run 通过后运行：
+
+```bash
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 90 \
+  --max-rate-deg-s 5 \
+  --max-excursion-pitch-deg 20 \
+  --max-excursion-roll-deg 20 \
+  --max-excursion-yaw-deg 15 \
+  --max-excursion-elbow-deg 30 \
+  --max-excursion-wrist-deg 20 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch roll yaw elbow wrist \
+  --execute
+```
+
+输入 `TRACK` 后，在 20 秒接管期间保持当前基准姿态。只有看到
+`arm_sdk enabled; tracking ROS targets.` 后才按下面时间表动作：
+
+1. 0–5 秒：保持基准姿态；
+2. 5–15 秒：缓慢屈肘约 20°，再回到基准；
+3. 15–30 秒：缓慢小幅前举约 15°，再回到基准；
+4. 30–45 秒：缓慢向左侧抬约 15°，再回到基准；
+5. 45–60 秒：pitch 和 roll 同时变化约 10°，做一次斜向抬臂，再回到基准；
+6. 60–75 秒：肩部小幅前举约 10°，同时屈肘约 20°，再回到基准；
+7. 75–85 秒：前臂缓慢向两个方向各旋转约 10°，每次都回中；
+8. 85–90 秒：回到基准并保持。
+
+整个序列保持躯干稳定，动作之间回到基准，不追求碰到限幅。出现碰撞趋势、踏步、突然反向、
+明显抖动或异常关节方向时，立即停止人体动作，并在桥接终端按 `Ctrl+C`；等待
+`arm_sdk weight returned to zero`。本轮结束后先分析新 CSV，再决定是否扩大到
+pitch 30°、roll 25°、yaw 15°、elbow 45°、wrist 30°。
+
+### 17.5 同一天逐步扩大范围
+
+三个测试必须串行完成，不能同时运行多个 `g1_arm_sdk_bridge.py`。每一档结束后必须看到
+`arm_sdk weight returned to zero`，确认 FSM 仍为 500，并让人体和机器人回到各自的基准
+姿态。若出现 `STOPPED`、碰撞趋势、踏步、异常方向、明显抖动或无法回到基准，当天停止扩大
+范围。设备没有移动时，三个测试之间不需要重新标定。
+
+第一档就是 17.4 的中等范围测试：pitch 20°、roll 20°、yaw 15°、elbow 30°、wrist 20°，
+跟随时间 90 秒。
+
+第一档通过后，运行第二档：
+
+```bash
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 100 \
+  --max-rate-deg-s 5 \
+  --max-excursion-pitch-deg 25 \
+  --max-excursion-roll-deg 20 \
+  --max-excursion-yaw-deg 15 \
+  --max-excursion-elbow-deg 35 \
+  --max-excursion-wrist-deg 25 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch roll yaw elbow wrist \
+  --execute
+```
+
+第二档动作顺序：保持 5 秒；屈肘并返回；前举并返回；侧举并返回；转掌并回中；斜向抬臂
+并返回；前举同时屈肘并返回；最后保持 5 秒。动作期间不必刻意撞到每一个限幅值。
+
+第二档通过后，运行第三档：
+
+```bash
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 120 \
+  --max-rate-deg-s 5 \
+  --max-excursion-pitch-deg 30 \
+  --max-excursion-roll-deg 25 \
+  --max-excursion-yaw-deg 15 \
+  --max-excursion-elbow-deg 45 \
+  --max-excursion-wrist-deg 30 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch roll yaw elbow wrist \
+  --execute
+```
+
+第三档在看到 `arm_sdk enabled` 后按以下时间安排：
+
+1. 0–5 秒：保持基准；
+2. 5–25 秒：缓慢屈肘到较大范围，保持 2 秒，再返回；
+3. 25–40 秒：缓慢前举，再返回；
+4. 40–55 秒：缓慢侧举，再返回；
+5. 55–70 秒：肩 yaw 向一个方向变化、回中、向另一方向变化、再回中；
+6. 70–95 秒：前臂向一个方向旋转、回中、向另一方向旋转、再回中；
+7. 95–115 秒：做一次斜向抬臂加屈肘的复合动作，再返回；
+8. 115–120 秒：保持基准。
+
+`--duration` 只计算完全接管后的跟随时间。每条命令之前另有 20 秒接管，结束后最多还有
+20 秒释放。在 `arm_sdk enabled` 之前不要开始动作。在同一天的三个测试中保持
+`--max-rate-deg-s 5` 不变，避免把幅度效应和速度效应混在一起。
+
+## 18. 从相对验证切换到绝对姿态跟随
+
+### 18.1 两种映射的区别
+
+前面的实机验证使用 `--relative-to-start`：接管结束时的人体目标被映射到机器人当时姿态，
+之后只执行人体目标的变化量。这能避免接管时的大幅动作，但同一个人体姿势在不同的机器人
+启动姿态下可能得到不同的机器人姿势。
+
+最终动作跟随使用 `--absolute-alignment`。双接收器重定向输出本身已经是 G1 模型的绝对
+关节目标；安全桥在 20 秒接管结束前收集 2 秒稳定目标，随后冻结该目标，以默认 2°/s 的
+速度把已启用的实机关节对齐过去。实机在目标误差小于 2° 并保持 1 秒后才显示：
+
+```text
+ABSOLUTE ALIGNMENT COMPLETE
+arm_sdk enabled; tracking ROS targets.
+```
+
+此后机器人直接跟踪绝对重定向目标。配置的安全包络仍然有效；超出包络的目标会被截断。
+`--relative-to-start` 和 `--absolute-alignment` 不能同时使用。带 `--execute` 时必须明确选择
+其中一种，防止遗漏映射参数后意外控制实机。
+
+绝对对齐期间必须保持人体起始姿势不动。以下任一条件都会停止并平滑释放控制：
+
+- 接管末段的目标波动超过 2°；
+- 对齐期间人体活动超过 4°；
+- UDP 目标过期；
+- LowState 中断、身体倾斜、非活动关节运动或跟踪误差越界；
+- 绝对目标超过本轮的分关节位移上限或 URDF 范围；
+- 90 秒内没有完成对齐。
+
+### 18.2 首次绝对对齐只测试左肘 15°
+
+标定 `DOWN` 中人体肘目标通常接近 0°，而 FSM 500 启动后的 G1 左肘通常约为 55–56°。
+第一次绝对对齐不直接跨越这约 56°。先在 RETARGET-REAL 和 UDP sender 正常运行时观察：
+
+```text
+sent ... elbow=... deg
+```
+
+缓慢调整并保持人体肘部，使 UDP 的 `elbow` 稳定在 **45–55°**。肩和手腕保持不动。这只是
+第一次机制验证的起始姿势；它不要求保持标定 `DOWN`。机器人保持 FSM 500，吊架只防跌，
+现场仍按第 1 节配置人员、手柄和实体急停。
+
+先在宿主机执行 dry-run：
+
+```bash
+conda activate unitree-rl
+cd ~/humanoid_mpc_ws/src/wb_humanoid_mpc
+
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --absolute-alignment \
+  --active-joints elbow \
+  --max-excursion-elbow-deg 15 \
+  --target-timeout 0.75
+```
+
+这一条不会创建命令发布器。确认输出包含：
+
+```text
+mapping mode: absolute-alignment
+DRY-RUN RESULT: PASS
+```
+
+如果失败，查看 `elbow` 行的 `actual`、`source`、`difference`。调整并重新保持人体肘部，让
+`difference` 小于 15°；第一次不要为了通过而放大 15° 上限。
+
+dry-run 通过后执行：
+
+```bash
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 30 \
+  --alignment-rate-deg-s 1 \
+  --max-rate-deg-s 3 \
+  --max-excursion-elbow-deg 15 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.75 \
+  --absolute-alignment \
+  --active-joints elbow \
+  --execute
+```
+
+看到目标和限幅信息正确后输入：
+
+```text
+ALIGN
+```
+
+随后按这个顺序操作：
+
+1. 20 秒接管期间继续保持人体起始肘姿势；机器人应保持原姿态；
+2. 出现 `Aligning the robot...` 后仍然保持不动；左肘以不超过 1°/s 对齐绝对目标；
+3. 看到 `ABSOLUTE ALIGNMENT COMPLETE` 和 `arm_sdk enabled` 后，再保持 5 秒；
+4. 人体肘目标缓慢增加约 5°，保持 2 秒，再回到起始值；
+5. 人体肘目标缓慢减小约 5°，保持 2 秒，再回到起始值；
+6. 最后保持不动，等待程序结束并确认 `arm_sdk weight returned to zero`。
+
+通过标准：绝对对齐没有 `STOPPED`；终端中的 `source/applied/bounded` 数值相同且没有
+`CLIPPED`；机器人实际肘角收敛到相同的绝对目标；两次约 5° 的动作方向正确；没有踏步、
+振荡或碰撞趋势；CSV 正常保存。若人体目标超过本轮安全包络，`bounded` 会停在允许边界并
+显示 `CLIPPED`，此时机器人不会执行超出边界的部分。通过后再把允许的初始差值按 15°、
+30°、45° 分级扩大，最后验证人体 `DOWN` 到机器人绝对 `DOWN`。不要从本节首测直接跳到
+五关节完整绝对对齐。

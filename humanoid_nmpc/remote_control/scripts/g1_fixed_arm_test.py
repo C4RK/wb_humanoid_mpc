@@ -63,6 +63,11 @@ JOINT_SPECS = {
     "left_wrist_roll": (19, (-1.972222054, 1.972222054)),
 }
 MAX_DELTA_RAD = math.radians(5.0)
+MAX_DIAGNOSTIC_WEIGHT = 1.0
+MAX_DIAGNOSTIC_DRIFT_RAD = math.radians(2.0)
+DIAGNOSTIC_SECONDS_PER_UNIT_WEIGHT = 20.0
+TAKEOVER_DURATION = 20.0
+RELEASE_SECONDS_PER_UNIT_WEIGHT = 20.0
 KP = 60.0
 KD = 1.5
 CONTROL_PERIOD = 0.02
@@ -241,7 +246,7 @@ def execute_test(
 
     try:
         send_phase(
-            publisher, command, crc, receiver, 2.0,
+            publisher, command, crc, receiver, TAKEOVER_DURATION,
             hold_initial, smoothstep, "takeover",
             joint_name, joint_index, limits, command_state,
         )
@@ -271,8 +276,12 @@ def execute_test(
                 for index in CONTROLLED_JOINTS
             }
         release_start_weight = command_state["weight"]
+        release_duration = max(
+            3.0,
+            RELEASE_SECONDS_PER_UNIT_WEIGHT * release_start_weight,
+        )
         send_phase(
-            publisher, command, crc, receiver, 2.0,
+            publisher, command, crc, receiver, release_duration,
             lambda _progress: release_pose,
             lambda progress: release_start_weight * (1.0 - smoothstep(progress)),
             "release", joint_name, joint_index, limits,
@@ -285,6 +294,151 @@ def execute_test(
             time.sleep(CONTROL_PERIOD)
 
     print("Fixed arm test completed; arm_sdk weight returned to zero.")
+
+
+def execute_takeover_diagnostic(
+    receiver: StateReceiver,
+    joint_name: str,
+    joint_index: int,
+    limits,
+    max_weight: float,
+) -> None:
+    """Probe a small Arm SDK blend without requesting any joint motion."""
+    state, received_at = receiver.snapshot()
+    if state is None or time.monotonic() - received_at > 0.2:
+        raise RuntimeError("LowState is unavailable")
+    validate_state(state, joint_name, joint_index, limits)
+
+    initial = {
+        index: state.motor_state[index].q
+        for index in CONTROLLED_JOINTS
+    }
+    peak_speed = {index: 0.0 for index in CONTROLLED_JOINTS}
+    peak_drift = {index: 0.0 for index in CONTROLLED_JOINTS}
+    ramp_duration = max(5.0, DIAGNOSTIC_SECONDS_PER_UNIT_WEIGHT * max_weight)
+    release_duration = max(3.0, DIAGNOSTIC_SECONDS_PER_UNIT_WEIGHT * max_weight)
+
+    print(
+        "ZERO-MOTION TAKEOVER DIAGNOSTIC: all commanded joint targets will "
+        "remain at their measured starting positions."
+    )
+    print(
+        f"Arm SDK weight will rise to {max_weight:.2f} over {ramp_duration:.1f} s, "
+        f"hold briefly, then return to zero over {release_duration:.1f} s."
+    )
+    confirmation = input("Type DIAGNOSE and press Enter to start: ")
+    if confirmation != "DIAGNOSE":
+        print("Diagnostic cancelled. No command publisher was created.")
+        return
+
+    publisher = ChannelPublisher("rt/arm_sdk", LowCmd_)
+    publisher.Init()
+    command = unitree_hg_msg_dds__LowCmd_()
+    crc = CRC()
+    command_state = {"weight": 0.0}
+
+    def observe(current_state: LowState_) -> None:
+        for index in CONTROLLED_JOINTS:
+            speed = abs(current_state.motor_state[index].dq)
+            drift = abs(current_state.motor_state[index].q - initial[index])
+            peak_speed[index] = max(peak_speed[index], speed)
+            peak_drift[index] = max(peak_drift[index], drift)
+
+        largest_drift_index = max(CONTROLLED_JOINTS, key=peak_drift.get)
+        if peak_drift[largest_drift_index] > MAX_DIAGNOSTIC_DRIFT_RAD:
+            raise RuntimeError(
+                "zero-motion takeover moved "
+                f"{JOINT_NAMES[largest_drift_index]}[{largest_drift_index}] by "
+                f"{math.degrees(peak_drift[largest_drift_index]):.2f} deg; "
+                "limit 2.00 deg"
+            )
+
+    def diagnostic_phase(duration: float, weight_fn, label: str) -> None:
+        started = time.monotonic()
+        next_tick = started
+        next_log = started
+        while True:
+            now = time.monotonic()
+            elapsed = now - started
+            if elapsed >= duration:
+                break
+
+            current_state, current_received_at = receiver.snapshot()
+            if current_state is None or now - current_received_at > 0.2:
+                raise RuntimeError("LowState timeout; stopping arm command stream")
+            observe(current_state)
+            validate_state(current_state, joint_name, joint_index, limits)
+
+            weight = weight_fn(elapsed / duration)
+            command_state["weight"] = weight
+            fill_command(command, initial, weight)
+            command.crc = crc.Crc(command)
+            publisher.Write(command)
+
+            if now >= next_log:
+                fastest_index = max(
+                    CONTROLLED_JOINTS,
+                    key=lambda index: abs(current_state.motor_state[index].dq),
+                )
+                largest_drift_index = max(
+                    CONTROLLED_JOINTS,
+                    key=lambda index: abs(
+                        current_state.motor_state[index].q - initial[index]
+                    ),
+                )
+                print(
+                    f"{label:<9} weight={weight:.3f}  "
+                    f"fastest={JOINT_NAMES[fastest_index]} "
+                    f"{current_state.motor_state[fastest_index].dq:+.3f} rad/s  "
+                    f"largest drift={JOINT_NAMES[largest_drift_index]} "
+                    f"{math.degrees(abs(current_state.motor_state[largest_drift_index].q - initial[largest_drift_index])):.2f} deg"
+                )
+                next_log = now + 0.5
+
+            next_tick += CONTROL_PERIOD
+            time.sleep(max(0.0, next_tick - time.monotonic()))
+
+    completed = False
+    try:
+        diagnostic_phase(
+            ramp_duration,
+            lambda progress: max_weight * smoothstep(progress),
+            "probe",
+        )
+        diagnostic_phase(2.0, lambda _progress: max_weight, "hold")
+        completed = True
+    finally:
+        current_state, _ = receiver.snapshot()
+        release_pose = dict(initial)
+        if current_state is not None:
+            release_pose = {
+                index: current_state.motor_state[index].q
+                for index in CONTROLLED_JOINTS
+            }
+        release_start_weight = command_state["weight"]
+        send_phase(
+            publisher, command, crc, receiver, release_duration,
+            lambda _progress: release_pose,
+            lambda progress: release_start_weight * (1.0 - smoothstep(progress)),
+            "release", joint_name, joint_index, limits,
+            command_state, monitor_motion=False,
+        )
+        fill_command(command, release_pose, 0.0)
+        command.crc = crc.Crc(command)
+        for _ in range(5):
+            publisher.Write(command)
+            time.sleep(CONTROL_PERIOD)
+
+        print("Takeover diagnostic summary (probe and hold phases):")
+        for index in CONTROLLED_JOINTS:
+            print(
+                f"  {JOINT_NAMES[index]:<22} "
+                f"peak speed={peak_speed[index]:.3f} rad/s  "
+                f"peak drift={math.degrees(peak_drift[index]):.2f} deg"
+            )
+
+    if completed:
+        print("TAKEOVER DIAGNOSTIC: PASS; arm_sdk weight returned to zero.")
 
 
 def main() -> int:
@@ -307,12 +461,26 @@ def main() -> int:
         action="store_true",
         help="enable physical motion; without this flag the program is read-only",
     )
+    parser.add_argument(
+        "--takeover-diagnostic",
+        action="store_true",
+        help="hold the measured pose and probe a small Arm SDK weight only",
+    )
+    parser.add_argument(
+        "--diagnostic-max-weight",
+        type=float,
+        default=0.10,
+        help="maximum Arm SDK weight for --takeover-diagnostic (default: 0.10; max: 1.00)",
+    )
     args = parser.parse_args()
 
     joint_index, limits = JOINT_SPECS[args.joint]
     delta_rad = math.radians(args.delta_deg)
     if abs(delta_rad) > MAX_DELTA_RAD:
         print("ERROR: --delta-deg must be between -5 and +5.")
+        return 2
+    if not 0.0 < args.diagnostic_max_weight <= MAX_DIAGNOSTIC_WEIGHT:
+        print("ERROR: --diagnostic-max-weight must be greater than 0 and no more than 1.00.")
         return 2
 
     ChannelFactoryInitialize(0, args.interface)
@@ -337,9 +505,18 @@ def main() -> int:
             print("DRY RUN ONLY: no command publisher was created.")
             print("Add --execute only after the robot is secured and the area is clear.")
             return 0
-        execute_test(
-            receiver, args.joint, joint_index, limits, delta_rad
-        )
+        if args.takeover_diagnostic:
+            execute_takeover_diagnostic(
+                receiver,
+                args.joint,
+                joint_index,
+                limits,
+                args.diagnostic_max_weight,
+            )
+        else:
+            execute_test(
+                receiver, args.joint, joint_index, limits, delta_rad
+            )
         return 0
     except (KeyboardInterrupt, RuntimeError) as error:
         print(f"STOPPED: {error}")

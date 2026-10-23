@@ -1,0 +1,768 @@
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 25 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 5 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=-5.1 roll=+16.9 yaw=-14.4 elbow=+0.0 wrist=-15.5 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=2 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=3 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=3 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=3 ms
+takeover weight=0.59  target_age=2 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.74  target_age=4 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=0 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=0 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +10.4/+16.5/+16.5/+16.0
+active source/applied/desired/actual deg: pitch +10.3/+16.4/+16.6/+16.0
+active source/applied/desired/actual deg: pitch +12.2/+18.4/+18.4/+17.3
+active source/applied/desired/actual deg: pitch +7.8/+14.0/+16.6/+16.2
+active source/applied/desired/actual deg: pitch -5.3/+0.9/+13.6/+13.5
+active source/applied/desired/actual deg: pitch -14.1/-8.0/+11.5/+11.4
+active source/applied/desired/actual deg: pitch -18.6/-12.5/+11.5/+11.4
+active source/applied/desired/actual deg: pitch -19.6/-13.5/+11.5/+11.4
+active source/applied/desired/actual deg: pitch -19.6/-13.4/+11.5/+11.4
+active source/applied/desired/actual deg: pitch -10.9/-4.7/+11.5/+11.4
+active source/applied/desired/actual deg: pitch -0.4/+5.8/+11.5/+11.4
+active source/applied/desired/actual deg: pitch +12.8/+18.9/+13.3/+12.2
+active source/applied/desired/actual deg: pitch +24.2/+30.3/+16.3/+15.3
+active source/applied/desired/actual deg: pitch +33.0/+39.2/+19.3/+18.1
+active source/applied/desired/actual deg: pitch +40.0/+46.2/+21.5/+20.1
+active source/applied/desired/actual deg: pitch +38.6/+44.8/+21.5/+20.2
+active source/applied/desired/actual deg: pitch +36.5/+42.7/+21.5/+20.2
+active source/applied/desired/actual deg: pitch +34.4/+40.5/+21.5/+20.2
+active source/applied/desired/actual deg: pitch +26.9/+33.0/+21.5/+20.2
+active source/applied/desired/actual deg: pitch +3.3/+9.5/+20.0/+19.4
+active source/applied/desired/actual deg: pitch -7.5/-1.4/+17.0/+16.7
+active source/applied/desired/actual deg: pitch -16.2/-10.0/+14.0/+13.7
+active source/applied/desired/actual deg: pitch +0.1/+6.3/+11.5/+11.4
+active source/applied/desired/actual deg: pitch +11.8/+17.9/+13.9/+13.0
+active source/applied/desired/actual deg: pitch +11.9/+18.0/+16.9/+15.9
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1250 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T152425Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 30 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 10 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+11.2 roll=+12.0 yaw=-7.7 elbow=+0.0 wrist=-13.5 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=3 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.59  target_age=1 ms
+takeover weight=0.66  target_age=3 ms
+takeover weight=0.74  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=2 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +16.3/+16.5/+16.5/+16.0
+active source/applied/desired/actual deg: pitch +15.5/+15.7/+15.7/+15.0
+active source/applied/desired/actual deg: pitch +16.4/+16.6/+16.6/+15.9
+active source/applied/desired/actual deg: pitch +10.8/+11.0/+14.7/+14.2
+active source/applied/desired/actual deg: pitch -8.4/-8.2/+11.6/+11.5
+active source/applied/desired/actual deg: pitch -18.5/-18.3/+8.5/+9.0
+active source/applied/desired/actual deg: pitch -26.9/-26.7/+6.5/+6.8
+active source/applied/desired/actual deg: pitch -31.4/-31.2/+6.5/+6.8
+active source/applied/desired/actual deg: pitch -30.4/-30.2/+6.5/+6.8
+active source/applied/desired/actual deg: pitch -23.5/-23.3/+6.5/+6.8
+active source/applied/desired/actual deg: pitch -13.3/-13.1/+6.5/+6.8
+active source/applied/desired/actual deg: pitch -2.5/-2.3/+6.5/+6.8
+active source/applied/desired/actual deg: pitch +5.8/+6.0/+6.5/+6.8
+active source/applied/desired/actual deg: pitch +14.3/+14.5/+9.4/+9.0
+active source/applied/desired/actual deg: pitch +22.6/+22.8/+12.4/+11.6
+active source/applied/desired/actual deg: pitch +30.5/+30.7/+15.4/+14.3
+active source/applied/desired/actual deg: pitch +40.0/+40.2/+18.5/+17.3
+active source/applied/desired/actual deg: pitch +40.6/+40.8/+21.5/+19.7
+active source/applied/desired/actual deg: pitch +29.1/+29.3/+24.5/+22.6
+active source/applied/desired/actual deg: pitch +27.4/+27.6/+26.5/+24.4
+active source/applied/desired/actual deg: pitch +27.3/+27.5/+26.5/+24.4
+active source/applied/desired/actual deg: pitch +24.8/+25.0/+25.5/+24.4
+active source/applied/desired/actual deg: pitch +15.6/+15.8/+22.5/+21.5
+active source/applied/desired/actual deg: pitch +18.4/+18.6/+19.4/+18.7
+active source/applied/desired/actual deg: pitch +18.1/+18.3/+18.3/+17.8
+active source/applied/desired/actual deg: pitch +17.3/+17.5/+17.5/+16.9
+active source/applied/desired/actual deg: pitch +17.4/+17.6/+17.6/+16.8
+active source/applied/desired/actual deg: pitch +11.7/+11.9/+15.4/+15.3
+active source/applied/desired/actual deg: pitch +3.1/+3.3/+12.4/+12.3
+active source/applied/desired/actual deg: pitch +5.0/+5.2/+9.4/+9.5
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1500 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T152549Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 35 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 15 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+14.0 roll=+18.6 yaw=-16.6 elbow=+0.0 wrist=-8.3 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=2 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=3 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=2 ms
+takeover weight=0.58  target_age=2 ms
+takeover weight=0.66  target_age=2 ms
+takeover weight=0.73  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=2 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +15.4/+16.5/+16.5/+16.0
+active source/applied/desired/actual deg: pitch +14.1/+15.2/+15.2/+14.9
+active source/applied/desired/actual deg: pitch +8.3/+9.4/+12.6/+12.4
+active source/applied/desired/actual deg: pitch +0.1/+1.2/+9.5/+9.6
+active source/applied/desired/actual deg: pitch -5.4/-4.3/+6.5/+6.9
+active source/applied/desired/actual deg: pitch -17.2/-16.1/+3.5/+4.4
+active source/applied/desired/actual deg: pitch -23.5/-22.3/+1.5/+2.4
+active source/applied/desired/actual deg: pitch -31.9/-30.8/+1.5/+2.4
+active source/applied/desired/actual deg: pitch -38.7/-37.6/+1.5/+2.4
+active source/applied/desired/actual deg: pitch -32.0/-30.9/+1.5/+2.4
+active source/applied/desired/actual deg: pitch -16.0/-14.9/+1.5/+2.4
+active source/applied/desired/actual deg: pitch -4.0/-2.9/+1.5/+2.4
+active source/applied/desired/actual deg: pitch +8.8/+9.9/+3.6/+3.7
+active source/applied/desired/actual deg: pitch +17.7/+18.8/+6.6/+6.4
+active source/applied/desired/actual deg: pitch +24.4/+25.5/+9.7/+9.3
+active source/applied/desired/actual deg: pitch +32.7/+33.8/+12.7/+11.8
+active source/applied/desired/actual deg: pitch +42.8/+43.9/+15.8/+14.6
+active source/applied/desired/actual deg: pitch +46.4/+47.5/+18.8/+17.5
+active source/applied/desired/actual deg: pitch +47.9/+49.0/+21.8/+20.2
+active source/applied/desired/actual deg: pitch +50.2/+51.3/+24.8/+22.8
+active source/applied/desired/actual deg: pitch +49.6/+50.7/+27.9/+25.4
+active source/applied/desired/actual deg: pitch +48.4/+49.5/+30.9/+28.5
+active source/applied/desired/actual deg: pitch +44.4/+45.5/+31.5/+29.4
+active source/applied/desired/actual deg: pitch +42.4/+43.5/+31.5/+29.4
+active source/applied/desired/actual deg: pitch +18.3/+19.4/+30.2/+29.2
+active source/applied/desired/actual deg: pitch -1.5/-0.4/+27.2/+26.3
+active source/applied/desired/actual deg: pitch -14.6/-13.5/+24.2/+23.0
+active source/applied/desired/actual deg: pitch -19.4/-18.3/+21.2/+20.4
+active source/applied/desired/actual deg: pitch -15.4/-14.3/+18.2/+17.9
+active source/applied/desired/actual deg: pitch -12.9/-11.8/+15.1/+14.7
+active source/applied/desired/actual deg: pitch -12.0/-10.9/+12.1/+11.7
+active source/applied/desired/actual deg: pitch -12.0/-10.9/+9.1/+9.2
+active source/applied/desired/actual deg: pitch -11.7/-10.6/+6.1/+6.7
+active source/applied/desired/actual deg: pitch -9.6/-8.5/+3.0/+3.8
+active source/applied/desired/actual deg: pitch -9.6/-8.5/+1.5/+2.4
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1750 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T152713Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 40 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 20 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+6.1 roll=+13.3 yaw=-9.9 elbow=+0.0 wrist=-7.7 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=2 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=21 ms
+takeover weight=0.50  target_age=2 ms
+takeover weight=0.58  target_age=0 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.73  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +18.8/+16.5/+16.5/+16.0
+active source/applied/desired/actual deg: pitch +22.5/+20.2/+17.2/+16.1
+active source/applied/desired/actual deg: pitch +29.9/+27.6/+20.2/+18.5
+active source/applied/desired/actual deg: pitch +33.3/+31.0/+23.3/+21.5
+active source/applied/desired/actual deg: pitch +33.0/+30.7/+26.3/+24.1
+active source/applied/desired/actual deg: pitch +32.8/+30.5/+29.3/+27.2
+active source/applied/desired/actual deg: pitch +34.0/+31.7/+31.7/+29.4
+active source/applied/desired/actual deg: pitch +27.5/+25.2/+29.6/+28.3
+active source/applied/desired/actual deg: pitch +8.4/+6.1/+26.6/+25.5
+active source/applied/desired/actual deg: pitch -11.3/-13.6/+23.5/+22.6
+active source/applied/desired/actual deg: pitch -25.1/-27.4/+20.5/+20.0
+active source/applied/desired/actual deg: pitch -30.0/-32.4/+17.4/+16.9
+active source/applied/desired/actual deg: pitch -38.7/-41.0/+14.4/+14.1
+active source/applied/desired/actual deg: pitch -44.7/-47.0/+11.4/+11.4
+active source/applied/desired/actual deg: pitch -50.4/-52.7/+8.4/+8.9
+active source/applied/desired/actual deg: pitch -58.9/-61.2/+5.4/+5.9
+active source/applied/desired/actual deg: pitch -65.5/-67.8/+2.3/+3.1
+active source/applied/desired/actual deg: pitch -69.5/-71.8/-0.7/+0.2
+active source/applied/desired/actual deg: pitch -75.4/-77.7/-3.5/-2.1
+active source/applied/desired/actual deg: pitch -80.5/-82.9/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -81.0/-83.3/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -64.1/-66.4/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -52.1/-54.4/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -40.1/-42.4/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -27.7/-30.0/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -17.3/-19.6/-3.5/-2.2
+active source/applied/desired/actual deg: pitch -4.5/-6.8/-3.5/-2.2
+active source/applied/desired/actual deg: pitch +9.9/+7.6/-1.2/-0.8
+active source/applied/desired/actual deg: pitch +20.0/+17.7/+1.9/+2.1
+active source/applied/desired/actual deg: pitch +28.1/+25.8/+4.9/+4.8
+active source/applied/desired/actual deg: pitch +35.7/+33.3/+7.9/+7.5
+active source/applied/desired/actual deg: pitch +40.2/+37.9/+11.0/+10.4
+active source/applied/desired/actual deg: pitch +44.2/+41.9/+14.0/+13.0
+active source/applied/desired/actual deg: pitch +45.4/+43.1/+17.0/+16.0
+active source/applied/desired/actual deg: pitch +48.3/+46.0/+20.0/+18.4
+active source/applied/desired/actual deg: pitch +47.5/+45.2/+23.1/+21.1
+active source/applied/desired/actual deg: pitch +46.3/+44.0/+26.2/+24.0
+active source/applied/desired/actual deg: pitch +48.1/+45.8/+29.2/+27.1
+active source/applied/desired/actual deg: pitch +43.2/+40.9/+32.2/+29.6
+active source/applied/desired/actual deg: pitch +34.0/+31.6/+33.2/+31.6
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 2000 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T152840Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 40 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 20 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+15.0 roll=+11.0 yaw=-0.7 elbow=+0.0 wrist=-7.0 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.8 roll=+12.7 yaw=+0.3 elbow=+55.8 wrist=+7.9 deg
+Active tracked joints: pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=2 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=2 ms
+takeover weight=0.43  target_age=3 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.59  target_age=3 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.74  target_age=1 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=0 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +3.8/+16.8/+16.8/+16.2
+active source/applied/desired/actual deg: pitch +4.9/+18.0/+18.0/+16.9
+active source/applied/desired/actual deg: pitch +2.6/+15.6/+17.0/+16.6
+active source/applied/desired/actual deg: pitch -15.4/-2.4/+14.0/+13.7
+active source/applied/desired/actual deg: pitch -29.3/-16.2/+11.0/+11.0
+active source/applied/desired/actual deg: pitch -41.8/-28.7/+8.0/+8.1
+active source/applied/desired/actual deg: pitch -46.3/-33.2/+4.9/+5.4
+active source/applied/desired/actual deg: pitch -48.2/-35.2/+1.9/+2.5
+active source/applied/desired/actual deg: pitch -52.4/-39.4/-1.2/+0.1
+active source/applied/desired/actual deg: pitch -55.4/-42.4/-3.2/-2.0
+active source/applied/desired/actual deg: pitch -61.1/-48.1/-3.2/-2.0
+active source/applied/desired/actual deg: pitch -66.3/-53.2/-3.2/-2.0
+active source/applied/desired/actual deg: pitch -69.7/-56.7/-3.2/-2.0
+active source/applied/desired/actual deg: pitch -54.7/-41.6/-3.2/-2.0
+active source/applied/desired/actual deg: pitch -28.1/-15.1/-3.2/-2.0
+active source/applied/desired/actual deg: pitch -6.7/+6.3/-1.5/-1.2
+active source/applied/desired/actual deg: pitch +3.7/+16.7/+1.5/+1.7
+active source/applied/desired/actual deg: pitch +9.8/+22.8/+4.5/+4.6
+active source/applied/desired/actual deg: pitch +24.3/+37.4/+7.5/+7.1
+active source/applied/desired/actual deg: pitch +31.4/+44.5/+10.5/+9.8
+active source/applied/desired/actual deg: pitch +37.9/+50.9/+13.5/+12.5
+active source/applied/desired/actual deg: pitch +43.9/+56.9/+16.6/+15.7
+active source/applied/desired/actual deg: pitch +46.7/+59.7/+19.6/+18.1
+active source/applied/desired/actual deg: pitch +52.9/+66.0/+22.7/+20.8
+active source/applied/desired/actual deg: pitch +52.6/+65.7/+25.7/+23.7
+active source/applied/desired/actual deg: pitch +52.8/+65.9/+28.7/+26.4
+active source/applied/desired/actual deg: pitch +50.0/+63.0/+31.7/+29.4
+active source/applied/desired/actual deg: pitch +54.9/+67.9/+34.7/+31.8
+active source/applied/desired/actual deg: pitch +52.8/+65.8/+36.8/+34.0
+active source/applied/desired/actual deg: pitch +49.7/+62.7/+36.8/+34.0
+active source/applied/desired/actual deg: pitch +28.5/+41.5/+36.8/+34.0
+active source/applied/desired/actual deg: pitch +1.9/+14.9/+34.0/+32.3
+active source/applied/desired/actual deg: pitch -9.8/+3.3/+31.0/+29.5
+active source/applied/desired/actual deg: pitch -19.9/-6.8/+27.9/+27.0
+active source/applied/desired/actual deg: pitch -28.7/-15.6/+24.9/+23.9
+active source/applied/desired/actual deg: pitch -31.9/-18.9/+21.9/+21.0
+active source/applied/desired/actual deg: pitch -37.4/-24.4/+18.9/+18.1
+active source/applied/desired/actual deg: pitch -37.3/-24.2/+15.9/+15.7
+active source/applied/desired/actual deg: pitch -37.2/-24.1/+12.9/+12.6
+active source/applied/desired/actual deg: pitch -36.7/-23.7/+9.8/+9.9
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.95
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 2000 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T153007Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 30 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 5 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch elbow \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=-3.0 roll=+11.0 yaw=-9.1 elbow=+0.0 wrist=-5.6 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.6 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: elbow, pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=2 ms
+takeover weight=0.01  target_age=0 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=2 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.51  target_age=1 ms
+takeover weight=0.59  target_age=22 ms
+takeover weight=0.66  target_age=0 ms
+takeover weight=0.74  target_age=2 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=1 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=6 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +3.7/+16.6/+16.6/+16.0  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +4.5/+17.4/+17.4/+16.8  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +4.4/+17.3/+17.3/+16.8  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +7.3/+20.2/+19.8/+18.2  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +5.4/+18.3/+19.0/+18.3  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -10.8/+2.1/+16.0/+15.8  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -22.9/-10.0/+13.0/+12.7  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -38.9/-25.9/+11.6/+11.4  elbow +2.6/+58.5/+57.8/+57.6
+active source/applied/desired/actual deg: pitch -34.9/-22.0/+11.6/+11.3  elbow +7.7/+63.6/+59.8/+59.6
+active source/applied/desired/actual deg: pitch -23.4/-10.5/+11.6/+11.3  elbow +25.7/+81.6/+60.9/+60.8
+active source/applied/desired/actual deg: pitch -20.0/-7.1/+11.6/+11.3  elbow +38.1/+94.0/+60.9/+60.9
+active source/applied/desired/actual deg: pitch -18.6/-5.7/+11.6/+11.3  elbow +0.1/+56.0/+60.1/+60.6
+active source/applied/desired/actual deg: pitch -18.7/-5.8/+11.6/+11.3  elbow +0.0/+55.9/+57.1/+57.9
+active source/applied/desired/actual deg: pitch -14.8/-1.8/+11.6/+11.3  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +1.6/+14.5/+12.5/+11.6  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +12.8/+25.7/+15.5/+14.4  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +23.1/+36.0/+18.6/+17.3  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +26.5/+39.5/+21.6/+19.9  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +28.5/+41.5/+21.6/+20.3  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +11.8/+24.7/+21.6/+20.3  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch -9.8/+3.1/+18.9/+18.1  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch -21.6/-8.6/+15.9/+15.7  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch -22.1/-9.2/+12.9/+12.6  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch -19.0/-6.1/+11.6/+11.4  elbow +8.2/+64.1/+57.0/+57.0
+active source/applied/desired/actual deg: pitch -16.3/-3.3/+11.6/+11.3  elbow +19.2/+75.0/+60.0/+59.7
+active source/applied/desired/actual deg: pitch -13.8/-0.9/+11.6/+11.3  elbow +39.9/+95.8/+60.9/+60.9
+active source/applied/desired/actual deg: pitch -14.4/-1.4/+11.6/+11.3  elbow +21.0/+76.8/+60.9/+60.9
+active source/applied/desired/actual deg: pitch -14.1/-1.2/+11.6/+11.3  elbow +0.3/+56.1/+60.0/+60.5
+active source/applied/desired/actual deg: pitch -14.5/-1.6/+11.6/+11.3  elbow +0.0/+55.9/+57.0/+57.6
+active source/applied/desired/actual deg: pitch -13.0/-0.1/+11.6/+11.3  elbow +0.0/+55.9/+55.9/+56.3
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.95
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.50
+release weight=0.42
+release weight=0.34
+release weight=0.27
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 1500 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T153123Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 40 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 10 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch elbow \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=-3.9 roll=+24.1 yaw=-31.9 elbow=+0.0 wrist=-5.5 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.6 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: elbow, pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=2 ms
+takeover weight=0.01  target_age=1 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.05  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=2 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=2 ms
+takeover weight=0.50  target_age=322 ms
+takeover weight=0.58  target_age=1 ms
+takeover weight=0.66  target_age=2 ms
+takeover weight=0.74  target_age=5 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=4 ms
+takeover weight=0.91  target_age=1 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=1 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +11.0/+16.6/+16.6/+16.0  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +10.6/+16.1/+16.1/+15.7  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +11.7/+17.2/+17.2/+16.5  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -2.4/+3.1/+14.3/+14.0  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -15.5/-10.0/+11.3/+11.3  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -26.7/-21.2/+8.2/+8.6  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -34.6/-29.1/+6.6/+6.8  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -42.8/-37.3/+6.6/+6.8  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -43.5/-38.0/+6.6/+6.8  elbow +0.2/+56.1/+56.0/+56.0
+active source/applied/desired/actual deg: pitch -41.1/-35.6/+6.6/+6.8  elbow +19.5/+75.3/+59.0/+59.0
+active source/applied/desired/actual deg: pitch -38.5/-33.0/+6.6/+6.8  elbow +32.6/+88.5/+62.0/+61.8
+active source/applied/desired/actual deg: pitch -37.8/-32.3/+6.6/+6.8  elbow +36.3/+92.2/+65.1/+65.0
+active source/applied/desired/actual deg: pitch -35.0/-29.5/+6.6/+6.8  elbow +38.7/+94.5/+65.9/+65.9
+active source/applied/desired/actual deg: pitch -29.1/-23.6/+6.6/+6.8  elbow +44.2/+100.1/+65.9/+65.9
+active source/applied/desired/actual deg: pitch -27.4/-21.9/+6.6/+6.8  elbow +27.4/+83.3/+65.9/+65.9
+active source/applied/desired/actual deg: pitch -31.3/-25.8/+6.6/+6.8  elbow +2.4/+58.3/+64.8/+65.5
+active source/applied/desired/actual deg: pitch -33.5/-28.0/+6.6/+6.8  elbow +0.0/+55.9/+61.8/+62.4
+active source/applied/desired/actual deg: pitch -33.3/-27.8/+6.6/+6.8  elbow +0.0/+55.9/+58.8/+59.4
+active source/applied/desired/actual deg: pitch -32.3/-26.8/+6.6/+6.8  elbow +0.0/+55.9/+55.9/+56.7
+active source/applied/desired/actual deg: pitch -29.4/-23.9/+6.6/+6.8  elbow +0.0/+55.9/+55.9/+56.7
+active source/applied/desired/actual deg: pitch -10.6/-5.1/+6.6/+6.8  elbow +0.0/+55.9/+55.9/+56.7
+active source/applied/desired/actual deg: pitch +5.7/+11.2/+7.5/+7.2  elbow +0.0/+55.9/+55.9/+56.6
+active source/applied/desired/actual deg: pitch +15.6/+21.1/+10.6/+9.8  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +26.9/+32.5/+13.7/+12.6  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +42.2/+47.7/+16.7/+15.7  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +47.5/+53.0/+19.7/+18.2  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +44.3/+49.8/+22.7/+20.9  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +44.4/+50.0/+25.7/+23.6  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +45.5/+51.0/+26.6/+24.6  elbow +0.0/+55.9/+55.9/+56.1
+active source/applied/desired/actual deg: pitch +29.2/+34.8/+26.6/+24.6  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch +18.4/+24.0/+25.8/+24.6  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch +7.6/+13.1/+22.7/+21.8  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -2.1/+3.5/+19.7/+19.0  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -10.3/-4.8/+16.6/+16.3  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -15.2/-9.7/+13.6/+13.6  elbow +0.6/+56.5/+56.0/+56.0
+active source/applied/desired/actual deg: pitch -24.2/-18.6/+10.6/+10.4  elbow +11.4/+67.3/+59.0/+58.9
+active source/applied/desired/actual deg: pitch -29.5/-24.0/+7.6/+7.7  elbow +15.7/+71.5/+62.1/+61.8
+active source/applied/desired/actual deg: pitch -35.8/-30.3/+6.6/+6.7  elbow +25.4/+81.2/+65.1/+65.0
+active source/applied/desired/actual deg: pitch -37.9/-32.4/+6.6/+6.7  elbow +26.6/+82.4/+65.9/+65.9
+active source/applied/desired/actual deg: pitch -46.1/-40.5/+6.6/+6.7  elbow +31.0/+86.9/+65.9/+65.9
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 2000 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T153249Z.csv
+(unitree-rl) kunwang@kw:~/humanoid_mpc_ws/src/wb_humanoid_mpc$ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 40 \
+  --max-rate-deg-s 3 \
+  --max-excursion-deg 10 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.50 \
+  --relative-to-start \
+  --active-joints pitch elbow \
+  --execute
+Waiting for LowState and UDP targets on 127.0.0.1:15000. execute=True
+Fresh ROS arm target received: pitch=+21.6 roll=+13.4 yaw=-5.9 elbow=+0.0 wrist=-12.6 deg
+Relative-to-start alignment is ENABLED; the first target maps to the measured robot pose: pitch=+16.5 roll=+12.7 yaw=+0.3 elbow=+55.9 wrist=+7.9 deg
+Active tracked joints: elbow, pitch
+Type TRACK and press Enter to enable physical arm tracking: TRACK
+takeover weight=0.00  target_age=1 ms
+takeover weight=0.01  target_age=0 ms
+takeover weight=0.02  target_age=1 ms
+takeover weight=0.06  target_age=1 ms
+takeover weight=0.10  target_age=1 ms
+takeover weight=0.15  target_age=1 ms
+takeover weight=0.21  target_age=1 ms
+takeover weight=0.28  target_age=1 ms
+takeover weight=0.35  target_age=1 ms
+takeover weight=0.43  target_age=1 ms
+takeover weight=0.50  target_age=1 ms
+takeover weight=0.58  target_age=1 ms
+takeover weight=0.66  target_age=1 ms
+takeover weight=0.73  target_age=0 ms
+takeover weight=0.80  target_age=1 ms
+takeover weight=0.86  target_age=0 ms
+takeover weight=0.91  target_age=3 ms
+takeover weight=0.95  target_age=1 ms
+takeover weight=0.98  target_age=1 ms
+takeover weight=1.00  target_age=21 ms
+Relative target baseline refreshed at the end of takeover; tracking starts from the current human pose.
+arm_sdk enabled; tracking ROS targets.
+active source/applied/desired/actual deg: pitch +14.2/+16.5/+16.5/+16.0  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +13.3/+15.6/+15.6/+15.0  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +17.1/+19.4/+18.0/+16.9  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +28.9/+31.2/+21.0/+19.4  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +34.0/+36.3/+24.0/+22.4  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +15.1/+17.4/+24.4/+23.3  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch +0.8/+3.1/+21.4/+20.4  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -11.2/-8.9/+18.4/+18.0  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -22.4/-20.1/+15.4/+15.2  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -27.3/-25.0/+12.3/+12.1  elbow +0.0/+55.9/+55.9/+55.9
+active source/applied/desired/actual deg: pitch -30.8/-28.5/+9.3/+9.2  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -35.0/-32.7/+6.5/+6.8  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -36.9/-34.6/+6.5/+6.8  elbow +0.0/+55.9/+55.9/+56.0
+active source/applied/desired/actual deg: pitch -35.2/-32.9/+6.5/+6.8  elbow +19.0/+74.8/+58.4/+58.3
+active source/applied/desired/actual deg: pitch -30.4/-28.1/+6.5/+6.8  elbow +33.3/+89.2/+61.4/+61.3
+active source/applied/desired/actual deg: pitch -29.0/-26.7/+6.5/+6.8  elbow +43.8/+99.7/+64.4/+64.0
+active source/applied/desired/actual deg: pitch -25.0/-22.7/+6.5/+6.8  elbow +53.2/+109.1/+65.9/+65.9
+active source/applied/desired/actual deg: pitch -24.7/-22.4/+6.5/+6.8  elbow +33.7/+89.6/+65.9/+65.9
+active source/applied/desired/actual deg: pitch -26.2/-23.8/+6.5/+6.8  elbow +0.6/+56.5/+64.7/+65.4
+active source/applied/desired/actual deg: pitch -28.4/-26.1/+6.5/+6.8  elbow +0.0/+55.9/+61.7/+62.4
+active source/applied/desired/actual deg: pitch -30.3/-28.0/+6.5/+6.8  elbow +0.0/+55.9/+58.7/+59.2
+active source/applied/desired/actual deg: pitch -29.9/-27.6/+6.5/+6.8  elbow +0.0/+55.9/+55.9/+56.7
+active source/applied/desired/actual deg: pitch -29.4/-27.1/+6.5/+6.8  elbow +0.0/+55.9/+55.9/+56.6
+active source/applied/desired/actual deg: pitch -19.0/-16.7/+6.5/+6.8  elbow +0.0/+55.9/+55.9/+56.5
+active source/applied/desired/actual deg: pitch -0.3/+2.0/+6.5/+6.8  elbow +0.0/+55.9/+55.9/+56.5
+active source/applied/desired/actual deg: pitch +11.3/+13.6/+8.9/+8.4  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +27.1/+29.4/+11.9/+11.1  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +36.4/+38.7/+14.9/+13.8  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +36.9/+39.2/+17.9/+16.8  elbow +0.0/+55.9/+55.9/+56.3
+active source/applied/desired/actual deg: pitch +30.6/+32.9/+21.0/+19.4  elbow +0.0/+55.9/+55.9/+56.2
+active source/applied/desired/actual deg: pitch +28.2/+30.5/+24.0/+22.3  elbow +22.0/+77.9/+58.4/+58.2
+active source/applied/desired/actual deg: pitch +28.7/+31.0/+26.5/+24.5  elbow +41.8/+97.7/+61.5/+61.0
+active source/applied/desired/actual deg: pitch +27.5/+29.8/+26.5/+24.5  elbow +60.3/+116.2/+64.5/+63.8
+active source/applied/desired/actual deg: pitch +28.1/+30.4/+26.5/+24.5  elbow +73.3/+129.2/+65.9/+65.6
+active source/applied/desired/actual deg: pitch +26.6/+28.9/+26.5/+24.5  elbow +55.1/+111.0/+65.9/+65.6
+active source/applied/desired/actual deg: pitch +25.4/+27.7/+26.5/+24.5  elbow +0.6/+56.5/+65.1/+65.3
+active source/applied/desired/actual deg: pitch +20.4/+22.7/+24.8/+23.5  elbow +0.0/+55.9/+62.1/+62.4
+active source/applied/desired/actual deg: pitch +8.9/+11.3/+21.7/+20.7  elbow +0.0/+55.9/+59.0/+59.3
+active source/applied/desired/actual deg: pitch -15.2/-12.9/+18.6/+18.1  elbow +0.0/+55.9/+56.0/+56.6
+active source/applied/desired/actual deg: pitch -28.8/-26.5/+15.6/+15.5  elbow +0.0/+55.9/+55.9/+56.2
+Releasing arm_sdk control...
+release weight=1.00
+release weight=0.99
+release weight=0.98
+release weight=0.94
+release weight=0.90
+release weight=0.85
+release weight=0.79
+release weight=0.72
+release weight=0.65
+release weight=0.57
+release weight=0.49
+release weight=0.41
+release weight=0.34
+release weight=0.26
+release weight=0.20
+release weight=0.14
+release weight=0.09
+release weight=0.05
+release weight=0.02
+release weight=0.00
+arm_sdk weight returned to zero.
+Saved 2000 full-rate real-robot tracking samples to /home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/calibration_logs/g1_arm_tracking_20261022T153415Z.csv
