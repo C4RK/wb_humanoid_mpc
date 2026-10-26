@@ -5,6 +5,7 @@ import numpy as np
 
 from remote_control.dual_retargeting_kinematics import (
     ROTATION_TRANSPOSE_REPORTED,
+    affine_position_direction,
     apply_elbow_angle_calibration,
     diagnose_rotation_convention,
     dual_joint_angles,
@@ -12,6 +13,7 @@ from remote_control.dual_retargeting_kinematics import (
     dual_joint_angles_from_segment_vectors,
     estimate_local_rotation_axis,
     fit_elbow_angle_calibration,
+    fit_affine_position_direction_calibration,
     fit_body_alignment,
     fit_orientation_calibration,
     fit_position_direction_calibration,
@@ -467,6 +469,68 @@ class DualRetargetingKinematicsTest(unittest.TestCase):
         self.assertAlmostEqual(result.receiver_radius_m, radius, places=10)
         np.testing.assert_allclose(result.direction_errors_deg, 0.0, atol=2e-6)
         np.testing.assert_allclose(result.position_errors_m, 0.0, atol=1e-10)
+
+    def test_affine_position_direction_calibration_recovers_ellipsoid(self):
+        centre = np.array([0.22, -0.04, 0.08])
+        body_to_tx = np.array([
+            [0.15, 0.03, -0.01],
+            [-0.02, 0.20, 0.04],
+            [0.01, -0.03, 0.17],
+        ])
+        targets = np.array([
+            [0.0, 0.0, -1.0],
+            [0.5, 0.0, -math.sqrt(3.0) / 2.0],
+            [math.sqrt(3.0) / 2.0, 0.0, -0.5],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ])
+        positions = centre + targets @ body_to_tx
+
+        result = fit_affine_position_direction_calibration(
+            positions, targets)
+
+        np.testing.assert_allclose(result.centre_tx_m, centre, atol=1e-10)
+        np.testing.assert_allclose(
+            result.body_to_tx_matrix_m, body_to_tx, atol=1e-10)
+        np.testing.assert_allclose(result.direction_errors_deg, 0.0, atol=1e-5)
+        np.testing.assert_allclose(result.position_errors_m, 0.0, atol=1e-10)
+        for position, expected in zip(positions, targets):
+            direction, model_error = affine_position_direction(
+                position, result.centre_tx_m,
+                result.body_to_tx_matrix_m)
+            np.testing.assert_allclose(direction, expected, atol=1e-10)
+            self.assertAlmostEqual(model_error, 0.0, places=10)
+
+    def test_affine_position_direction_reports_off_surface_error(self):
+        centre = np.array([0.1, -0.2, 0.3])
+        body_to_tx = np.diag([0.15, 0.20, 0.18])
+        direction = np.array([1.0, 0.0, 0.0])
+        position = centre + np.array([0.19, 0.0, 0.0])
+
+        recovered, model_error = affine_position_direction(
+            position, centre, body_to_tx)
+
+        np.testing.assert_allclose(recovered, direction, atol=1e-12)
+        self.assertAlmostEqual(model_error, 0.04, places=12)
+
+    def test_affine_position_fit_requires_intermediate_forward_direction(self):
+        targets = np.array([
+            [0.0, 0.0, -1.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, -1.0],
+            [1.0, 0.0, 0.0],
+        ])
+        positions = np.array([
+            [0.1, 0.2, 0.1],
+            [0.3, 0.2, 0.3],
+            [0.2, 0.4, 0.3],
+            [0.1, 0.2, 0.1],
+            [0.3, 0.2, 0.3],
+        ])
+
+        with self.assertRaisesRegex(ValueError, 'intermediate forward'):
+            fit_affine_position_direction_calibration(positions, targets)
 
     def test_single_direction_calibration_recovers_forearm_axis(self):
         alignment = rotation_z(-0.38) @ rotation_x(0.21)

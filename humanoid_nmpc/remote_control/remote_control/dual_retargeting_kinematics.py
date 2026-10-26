@@ -88,6 +88,24 @@ class PositionDirectionCalibrationResult:
 
 
 @dataclass(frozen=True)
+class AffinePositionDirectionCalibrationResult:
+    """Upper-arm direction model for a non-spherical receiver trajectory.
+
+    The model is ``p_tx = centre_tx + direction_body @ body_to_tx_matrix``.
+    A general invertible matrix retains the fixed-centre safety check while
+    allowing the measured forward-raise path to be ellipsoidal instead of
+    forcing every reference onto one sphere.
+    """
+
+    centre_tx_m: np.ndarray
+    body_to_tx_matrix_m: np.ndarray
+    direction_errors_deg: np.ndarray
+    position_errors_m: np.ndarray
+    equivalent_radius_m: float
+    condition_number: float
+
+
+@dataclass(frozen=True)
 class RigidPairConsistencyResult:
     """Scatter of the transform between two receivers on one rigid chain."""
 
@@ -891,6 +909,101 @@ def fit_position_direction_calibration(positions_tx: np.ndarray,
         receiver_radius_m=radius,
         direction_errors_deg=direction_errors,
         position_errors_m=position_errors,
+    )
+
+
+def affine_position_direction(position_tx: np.ndarray,
+                              centre_tx_m: np.ndarray,
+                              body_to_tx_matrix_m: np.ndarray,
+                              ) -> Tuple[np.ndarray, float]:
+    """Map one receiver position to a unit body direction and model error.
+
+    ``model_error_m`` is the distance from the sample to the same radial
+    direction on the calibrated ellipsoid.  For an isotropic matrix this is
+    exactly the former absolute sphere-radius error.
+    """
+    position = np.asarray(position_tx, dtype=float)
+    centre = np.asarray(centre_tx_m, dtype=float)
+    matrix = np.asarray(body_to_tx_matrix_m, dtype=float)
+    if position.shape != (3,) or centre.shape != (3,) or matrix.shape != (3, 3):
+        raise ValueError('affine position model expects 3-vectors and a 3x3 matrix')
+    if not (np.all(np.isfinite(position)) and np.all(np.isfinite(centre)) and
+            np.all(np.isfinite(matrix))):
+        raise ValueError('affine position model contains non-finite values')
+    singular_values = np.linalg.svd(matrix, compute_uv=False)
+    if singular_values[-1] < 1e-6:
+        raise ValueError('affine position model matrix is singular')
+
+    # Row-vector calibration uses p - c = d @ B.  The equivalent column form
+    # is d = inv(B.T) @ (p - c).
+    raw_direction = np.linalg.solve(matrix.T, position - centre)
+    raw_norm = float(np.linalg.norm(raw_direction))
+    if raw_norm < 1e-9:
+        raise ValueError('receiver is at the affine position-model centre')
+    direction = raw_direction / raw_norm
+    expected_position = centre + direction @ matrix
+    model_error_m = float(np.linalg.norm(position - expected_position))
+    return direction, model_error_m
+
+
+def fit_affine_position_direction_calibration(
+        positions_tx: np.ndarray,
+        target_directions_body: np.ndarray,
+        ) -> AffinePositionDirectionCalibrationResult:
+    """Fit an ellipsoidal position-to-upper-arm-direction calibration.
+
+    The reference directions must span a full affine 3-D basis.  In
+    particular, DOWN/FORWARD/SIDEWAYS alone are insufficient; the two
+    intermediate forward-raise references make the centre and all matrix
+    components observable.
+    """
+    positions = np.asarray(positions_tx, dtype=float)
+    targets = np.asarray(target_directions_body, dtype=float)
+    if positions.ndim != 2 or positions.shape[1] != 3:
+        raise ValueError('positions must have shape (N, 3)')
+    if targets.shape != positions.shape:
+        raise ValueError('target directions must have shape (N, 3)')
+    if len(positions) < 4:
+        raise ValueError('at least four known poses are required')
+    if not np.all(np.isfinite(positions)) or not np.all(np.isfinite(targets)):
+        raise ValueError('affine position calibration contains non-finite values')
+    target_norms = np.linalg.norm(targets, axis=1, keepdims=True)
+    if np.any(target_norms < 1e-9):
+        raise ValueError('target directions must be nonzero')
+    targets = targets / target_norms
+
+    design = np.column_stack((targets, np.ones(len(targets))))
+    coefficients, _, rank, singular_values = np.linalg.lstsq(
+        design, positions, rcond=None)
+    if rank < 4:
+        raise ValueError(
+            'reference directions do not span the affine position model; '
+            'collect the intermediate forward-raise references')
+    body_to_tx = coefficients[:3, :]
+    centre = coefficients[3, :]
+    matrix_singular_values = np.linalg.svd(body_to_tx, compute_uv=False)
+    if matrix_singular_values[-1] < 1e-6:
+        raise ValueError('fitted affine position matrix is singular')
+    condition = float(matrix_singular_values[0] / matrix_singular_values[-1])
+    equivalent_radius = float(np.cbrt(abs(np.linalg.det(body_to_tx))))
+
+    predicted_positions = centre + targets @ body_to_tx
+    position_errors = np.linalg.norm(predicted_positions - positions, axis=1)
+    measured_directions = []
+    for position in positions:
+        direction, _ = affine_position_direction(
+            position, centre, body_to_tx)
+        measured_directions.append(direction)
+    measured_directions = np.asarray(measured_directions)
+    cosines = np.sum(measured_directions * targets, axis=1)
+    direction_errors = np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0)))
+    return AffinePositionDirectionCalibrationResult(
+        centre_tx_m=centre,
+        body_to_tx_matrix_m=body_to_tx,
+        direction_errors_deg=direction_errors,
+        position_errors_m=position_errors,
+        equivalent_radius_m=equivalent_radius,
+        condition_number=condition,
     )
 
 

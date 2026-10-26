@@ -23,6 +23,7 @@ from remote_control.dual_retargeting_kinematics import (
     fit_elbow_angle_calibration,
     apply_rotation_convention,
     estimate_local_rotation_axis,
+    fit_affine_position_direction_calibration,
     fit_position_direction_calibration,
     fit_single_direction_calibration,
     fit_single_direction_with_known_axis,
@@ -335,6 +336,11 @@ class DualCalibrationNode(Node):
                 print('[RETRY] Use a smaller, slower rotation about the forearm itself;')
                 print('keep the thumb, hand and receiver moving together as one unit.')
 
+        # The two intermediate forward raises directly constrain the part of
+        # the upper-receiver trajectory that a three-direction sphere fit can
+        # miss even when DOWN and FORWARD themselves look good.  They are used
+        # only for the upper-arm position model; the established forearm and
+        # elbow fits continue to use the original five references.
         # Three poses span independent segment directions.  STRAIGHT_DOWN
         # checks the forearm model near full elbow extension.  STRAIGHT_FORWARD
         # adds a direct constraint in the main teleoperation workspace.  Its
@@ -347,6 +353,16 @@ class DualCalibrationNode(Node):
              'forearm horizontal and pointing straight forward; palm faces\n'
              'right/inward and thumb points up.',
              (0.0, 0.0, 0.0, 0.0)),
+            ('forward_30',
+             'Start from DOWN and rotate the whole bent LEFT arm about 30 degrees\n'
+             'forward. Keep the elbow bent 90 degrees and do not twist the arm;\n'
+             'the forearm should point diagonally forward and upward.',
+             (-math.radians(30.0), 0.0, 0.0, 0.0)),
+            ('forward_60',
+             'Start from DOWN and rotate the whole bent LEFT arm about 60 degrees\n'
+             'forward. Keep the elbow bent 90 degrees and do not twist the arm;\n'
+             'the upper arm should be halfway between FORWARD_30 and horizontal.',
+             (-math.radians(60.0), 0.0, 0.0, 0.0)),
             ('forward',
              'LEFT upper arm horizontal and pointing forward; elbow bent 90 degrees;\n'
              'forearm straight up without twisting it; palm faces right/inward;\n'
@@ -426,6 +442,17 @@ class DualCalibrationNode(Node):
         ])
         reported_upper_rotations = np.array(upper_reference_rotations)
         reported_forearm_rotations = np.array(forearm_reference_rotations)
+        upper_only_labels = {'forward_30', 'forward_60'}
+        forearm_fit_mask = np.array([
+            label not in upper_only_labels for label in labels], dtype=bool)
+        forearm_fit_labels = [
+            label for label, keep in zip(labels, forearm_fit_mask) if keep]
+        forearm_fit_rotations_reported = reported_forearm_rotations[
+            forearm_fit_mask]
+        target_forearm_fit_rotations = np.asarray(
+            target_forearm_rotations)[forearm_fit_mask]
+        target_forearm_fit_directions = target_forearm_directions[
+            forearm_fit_mask]
         diagnostic_path = self._save_reference_diagnostic(
             np.array(upper_reference_positions),
             np.array(forearm_reference_positions),
@@ -441,22 +468,25 @@ class DualCalibrationNode(Node):
         position_fit = fit_position_direction_calibration(
             np.array(upper_reference_positions),
             target_upper_directions)
+        affine_position_fit = fit_affine_position_direction_calibration(
+            np.array(upper_reference_positions),
+            target_upper_directions)
 
         convention_fits = {}
         for convention in ROTATION_CONVENTIONS:
             corrected_forearm = apply_rotation_convention(
-                reported_forearm_rotations, convention)
+                forearm_fit_rotations_reported, convention)
             corrected_twist = apply_rotation_convention(
                 twist_R_f_reported, convention)
             axis_result = estimate_local_rotation_axis(corrected_twist)
             twist_fit = fit_single_direction_with_known_axis(
-                corrected_forearm, target_forearm_directions,
+                corrected_forearm, target_forearm_fit_directions,
                 axis_result.axis_local)
             direction_fit = fit_single_direction_calibration(
-                corrected_forearm, target_forearm_directions)
+                corrected_forearm, target_forearm_fit_directions)
             relative_errors = relative_rotation_errors(
                 corrected_forearm,
-                np.asarray(target_forearm_rotations),
+                target_forearm_fit_rotations,
                 position_fit.rotation_tx_to_body)
             convention_fits[convention] = {
                 'twist_direction_rms': float(np.sqrt(np.mean(
@@ -511,13 +541,14 @@ class DualCalibrationNode(Node):
         forearm_twist_axis_local = forearm_twist_fit.axis_local
         forearm_direction_align = forearm_direction_fit.rotation_tx_to_body
         forearm_direction_axis_local = forearm_direction_fit.axis_local
-        upper_reference_errors = position_fit.direction_errors_deg
+        upper_reference_errors = affine_position_fit.direction_errors_deg
         forearm_reference_errors = forearm_direction_fit.errors_deg
         forearm_twist_axis_direction_errors = forearm_twist_fit.errors_deg
 
         _, wrist_zero_target = arm_frames(0.0, 0.0, 0.0, 0.0)
         wrist_zero_forearm_rotations = [
-            rotation for rotation, label in zip(corrected_forearm_rotations, labels)
+            rotation for rotation, label in zip(
+                corrected_forearm_rotations, forearm_fit_labels)
             if label == 'down'
         ]
         forearm_mount = mean_rotation(np.array([
@@ -531,9 +562,11 @@ class DualCalibrationNode(Node):
             for rotation in wrist_zero_forearm_rotations
         ])
 
+        inverse_affine_position = np.linalg.inv(
+            affine_position_fit.body_to_tx_matrix_m.T)
         upper_reference_directions = np.array([
-            upper_position_align @
-            (position - position_fit.shoulder_center_tx_m)
+            inverse_affine_position @ (
+                position - affine_position_fit.centre_tx_m)
             for position in upper_reference_positions
         ])
         upper_reference_directions /= np.linalg.norm(
@@ -546,10 +579,12 @@ class DualCalibrationNode(Node):
         fitted_forearm_directions /= np.linalg.norm(
             fitted_forearm_directions, axis=1, keepdims=True)
         raw_elbow_angles = np.arcsin(np.clip(np.sum(
-            upper_reference_directions * fitted_forearm_directions,
+            upper_reference_directions[forearm_fit_mask] *
+            fitted_forearm_directions,
             axis=1), -1.0, 1.0))
         target_elbow_angles = np.arcsin(np.clip(np.sum(
-            target_upper_directions * target_forearm_directions,
+            target_upper_directions[forearm_fit_mask] *
+            target_forearm_fit_directions,
             axis=1), -1.0, 1.0))
         try:
             elbow_fit = fit_elbow_angle_calibration(
@@ -562,8 +597,9 @@ class DualCalibrationNode(Node):
             elbow_fit = None
 
         position_rms_m = float(np.sqrt(np.mean(
-            np.square(position_fit.position_errors_m))))
-        position_max_m = float(np.max(position_fit.position_errors_m))
+            np.square(affine_position_fit.position_errors_m))))
+        position_max_m = float(np.max(
+            affine_position_fit.position_errors_m))
         print('\n  Hybrid position/orientation residuals:')
         for label in reference_labels:
             values = [
@@ -572,9 +608,13 @@ class DualCalibrationNode(Node):
             ]
             print(f'    upper position {label:8s}: mean={np.mean(values):5.2f} deg, '
                   f'max={np.max(values):5.2f} deg')
-        for label in reference_labels:
+        forearm_reference_labels = tuple(
+            label for label in reference_labels
+            if label not in upper_only_labels)
+        for label in forearm_reference_labels:
             values = [
-                error for name, error in zip(labels, forearm_reference_errors)
+                error for name, error in zip(
+                    forearm_fit_labels, forearm_reference_errors)
                 if name == label
             ]
             print(f'    forearm {label:6s}: mean={np.mean(values):5.2f} deg, '
@@ -592,8 +632,9 @@ class DualCalibrationNode(Node):
                   f'max {np.max(np.abs(elbow_fit.raw_errors_deg)):.2f}'
                   ' -> '
                   f'{np.max(np.abs(elbow_fit.corrected_errors_deg)):.2f} deg')
-        print(f'    upper position model: radius='
-              f'{position_fit.receiver_radius_m*100:.1f} cm, '
+        print(f'    upper affine position model: equivalent radius='
+              f'{affine_position_fit.equivalent_radius_m*100:.1f} cm, '
+              f'condition={affine_position_fit.condition_number:.2f}, '
               f'RMS={position_rms_m*1000:.1f} mm, '
               f'max={position_max_m*1000:.1f} mm')
         upper_reference_max = float(np.max(upper_reference_errors))
@@ -609,8 +650,14 @@ class DualCalibrationNode(Node):
             print('[Dual calibration] Stopped without saving. Repeat STEP 2')
             print('with the elbow fixed and a wider, slower palm rotation.')
             return
-        if not 0.08 <= position_fit.receiver_radius_m <= 0.35:
-            print('[ERROR] Upper receiver position radius is implausible.')
+        affine_singular_values = np.linalg.svd(
+            affine_position_fit.body_to_tx_matrix_m, compute_uv=False)
+        if (not 0.08 <= affine_position_fit.equivalent_radius_m <= 0.35 or
+                affine_singular_values[-1] < 0.05 or
+                affine_singular_values[0] > 0.45 or
+                affine_position_fit.condition_number > 4.0):
+            print('[ERROR] Upper receiver affine position model is implausible.')
+            print('The intermediate forward references may be inconsistent.')
             print('[Dual calibration] Stopped without saving.')
             return
         position_quality_warning = (
@@ -651,7 +698,7 @@ class DualCalibrationNode(Node):
                 return
 
         calibration = {
-            'version': 12,
+            'version': 13,
             'mode': 'dual_receiver_hybrid',
             'dry_run_only': dry_run_only,
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
@@ -670,6 +717,13 @@ class DualCalibrationNode(Node):
                 position_fit.shoulder_center_tx_m),
             'upper_receiver_radius_m': round(
                 position_fit.receiver_radius_m, 8),
+            'upper_position_model': 'affine_ellipsoid',
+            'upper_position_center_tx_m': _vector_list(
+                affine_position_fit.centre_tx_m),
+            'upper_position_body_to_tx_matrix_m': _matrix_list(
+                affine_position_fit.body_to_tx_matrix_m),
+            'upper_position_equivalent_radius_m': round(
+                affine_position_fit.equivalent_radius_m, 8),
             'forearm_rotation_tx_to_body': _matrix_list(
                 forearm_orientation_align),
             'forearm_direction_rotation_tx_to_body': _matrix_list(
@@ -718,6 +772,8 @@ class DualCalibrationNode(Node):
                     for value in forearm_twist_axis_direction_errors],
                 'upper_position_model_rms_m': round(position_rms_m, 8),
                 'upper_position_model_max_m': round(position_max_m, 8),
+                'upper_position_model_condition': round(
+                    affine_position_fit.condition_number, 8),
                 'forearm_twist_repeatability_errors_deg': [
                     round(float(value), 4)
                     for value in forearm_twist_reference_errors],

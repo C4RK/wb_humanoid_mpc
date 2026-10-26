@@ -21,6 +21,7 @@ from remote_control.dual_calibration_node import (
 )
 from remote_control.dual_retargeting_kinematics import (
     ROTATION_AS_REPORTED,
+    affine_position_direction,
     apply_elbow_angle_calibration,
     apply_rotation_convention,
     dual_joint_angles,
@@ -76,6 +77,9 @@ class DualRetargetingNode(Node):
             calibration, 'forearm_sensor_mount_rotation')
         self.use_hybrid = self.calibration_mode == 'dual_receiver_hybrid'
         if self.use_hybrid:
+            self.use_affine_upper_position = (
+                calibration.get('upper_position_model') ==
+                'affine_ellipsoid')
             self.upper_position_align = self._matrix(
                 calibration, 'upper_position_rotation_tx_to_body')
             self.upper_shoulder_center = self._vector(
@@ -84,6 +88,17 @@ class DualRetargetingNode(Node):
                 calibration['upper_receiver_radius_m'])
             if not 0.08 <= self.upper_receiver_radius <= 0.35:
                 raise ValueError('Invalid upper receiver radius')
+            if self.use_affine_upper_position:
+                self.upper_position_center = self._vector(
+                    calibration, 'upper_position_center_tx_m')
+                self.upper_position_body_to_tx = self._finite_matrix(
+                    calibration, 'upper_position_body_to_tx_matrix_m')
+                singular_values = np.linalg.svd(
+                    self.upper_position_body_to_tx, compute_uv=False)
+                if (singular_values[-1] < 0.05 or
+                        singular_values[0] > 0.45 or
+                        singular_values[0] / singular_values[-1] > 4.0):
+                    raise ValueError('Invalid affine upper position model')
             self.forearm_align = self._matrix(
                 calibration, 'forearm_rotation_tx_to_body')
             self.forearm_axis_local = self._vector(
@@ -213,6 +228,7 @@ class DualRetargetingNode(Node):
         self.get_logger().info(
             'Loaded dual calibration: '
             f'mode={self.calibration_mode}, '
+            f'upper_position_model={'affine_ellipsoid' if self.use_hybrid and self.use_affine_upper_position else 'sphere'}, '
             f'rotation={self.rotation_convention}, '
             f"reference max={quality.get('reference_max_error_deg', float('nan')):.1f} deg, "
             f'dry_run_only={self.calibration_dry_run_only}, '
@@ -312,6 +328,13 @@ class DualRetargetingNode(Node):
             raise ValueError(f'Calibration matrix {key} is not a proper rotation')
         return value
 
+    @staticmethod
+    def _finite_matrix(calibration, key):
+        value = np.asarray(calibration[key], dtype=float)
+        if value.shape != (3, 3) or not np.all(np.isfinite(value)):
+            raise ValueError(f'Invalid calibration matrix: {key}')
+        return value
+
     def _on_upper_pose(self, msg: PoseStamped):
         key = _stamp_ns(msg)
         self._pending_upper[key] = msg
@@ -374,22 +397,39 @@ class DualRetargetingNode(Node):
                 return
 
         if self.use_hybrid:
-            upper_offset = p_u - self.upper_shoulder_center
-            upper_radius = float(np.linalg.norm(upper_offset))
-            if upper_radius < 1e-6:
-                self.get_logger().warn(
-                    'Upper receiver is at the fitted shoulder centre; frame dropped.',
-                    throttle_duration_sec=1.0)
-                return
-            upper_radius_error = abs(
-                upper_radius - self.upper_receiver_radius)
+            if self.use_affine_upper_position:
+                try:
+                    upper_direction, upper_radius_error = (
+                        affine_position_direction(
+                            p_u,
+                            self.upper_position_center,
+                            self.upper_position_body_to_tx))
+                except ValueError as exc:
+                    self.get_logger().warn(
+                        f'Upper affine position model failed: {exc}. '
+                        'Frame dropped.', throttle_duration_sec=1.0)
+                    return
+            else:
+                upper_offset = p_u - self.upper_shoulder_center
+                upper_radius = float(np.linalg.norm(upper_offset))
+                if upper_radius < 1e-6:
+                    self.get_logger().warn(
+                        'Upper receiver is at the fitted shoulder centre; '
+                        'frame dropped.', throttle_duration_sec=1.0)
+                    return
+                upper_radius_error = abs(
+                    upper_radius - self.upper_receiver_radius)
+                upper_direction = self.upper_position_align @ upper_offset
             if upper_radius_error > self.max_upper_radius_error:
+                model_name = (
+                    'affine position model' if self.use_affine_upper_position
+                    else 'position radius')
                 self.get_logger().warn(
-                    f'Upper position radius error {upper_radius_error*1000:.0f} mm; '
+                    f'Upper {model_name} error '
+                    f'{upper_radius_error*1000:.0f} mm; '
                     'transmitter or upper receiver may have shifted. Frame dropped.',
                     throttle_duration_sec=1.0)
                 return
-            upper_direction = self.upper_position_align @ upper_offset
             forearm_aligned = self.forearm_align @ R_f
             forearm_direction_aligned = self.forearm_direction_align @ R_f
             forearm_direction = (
@@ -566,6 +606,9 @@ class DualRetargetingNode(Node):
                 'upper_radius_error_m': (
                     float(upper_radius_error)
                     if upper_radius_error is not None else float('nan')),
+                'upper_position_model_error_m': (
+                    float(upper_radius_error)
+                    if upper_radius_error is not None else float('nan')),
                 'shoulder_drift_m': (
                     float(shoulder_drift)
                     if shoulder_drift is not None else float('nan')),
@@ -591,7 +634,11 @@ class DualRetargetingNode(Node):
                 f'; joint-centre errors: shoulder={shoulder_drift*1000:.0f} mm, '
                 f'elbow={elbow_mismatch*1000:.0f} mm')
         if self.use_hybrid:
-            message += f'; upper radius error={upper_radius_error*1000:.0f} mm'
+            error_label = (
+                'upper affine model error'
+                if self.use_affine_upper_position else
+                'upper radius error')
+            message += f'; {error_label}={upper_radius_error*1000:.0f} mm'
         if collision_active:
             action = 'held' if collision_held else (
                 f'roll {math.degrees(collision_roll_adjustment):+.1f} deg')
@@ -629,6 +676,10 @@ class DualRetargetingNode(Node):
         arrays.update({
             'joint_names': np.asarray(ARM_JOINT_KEYS),
             'calibration_mode': np.asarray(self.calibration_mode),
+            'upper_position_model': np.asarray(
+                'affine_ellipsoid'
+                if self.use_hybrid and self.use_affine_upper_position
+                else 'sphere'),
             'rotation_convention': np.asarray(self.rotation_convention),
             'calibration_dry_run_only': np.asarray(
                 self.calibration_dry_run_only),
