@@ -51,6 +51,7 @@ REFERENCE_REPEATS = 3
 ASSIGNMENT_CHECK_SECONDS = 6.0
 TWIST_AXIS_SECONDS = 8.0
 REFERENCE_REPEAT_LIMIT_DEG = 15.0
+FORWARD_ARC_ANGLE_TOLERANCE_DEG = 12.0
 UPPER_REFERENCE_HARD_LIMIT_DEG = 15.0
 FOREARM_REFERENCE_HARD_LIMIT_DEG = 25.0
 TWIST_REFERENCE_HARD_LIMIT_DEG = 15.0
@@ -356,12 +357,13 @@ class DualCalibrationNode(Node):
             ('forward_30',
              'Start from DOWN and rotate the whole bent LEFT arm about 30 degrees\n'
              'forward. Keep the elbow bent 90 degrees and do not twist the arm;\n'
-             'the forearm should point diagonally forward and upward.',
+             'the forearm should point diagonally forward and upward. The upper\n'
+             'arm must remain clearly below 45 degrees, closer to DOWN than level.',
              (-math.radians(30.0), 0.0, 0.0, 0.0)),
             ('forward_60',
              'Start from DOWN and rotate the whole bent LEFT arm about 60 degrees\n'
              'forward. Keep the elbow bent 90 degrees and do not twist the arm;\n'
-             'the upper arm should be halfway between FORWARD_30 and horizontal.',
+             'the upper arm should be above 45 degrees but still below horizontal.',
              (-math.radians(60.0), 0.0, 0.0, 0.0)),
             ('forward',
              'LEFT upper arm horizontal and pointing forward; elbow bent 90 degrees;\n'
@@ -391,6 +393,11 @@ class DualCalibrationNode(Node):
         target_upper_rotations = []
         target_forearm_rotations = []
         labels = []
+        forward_arc_expected_deg = {
+            'forward_30': 30.0,
+            'forward_60': 60.0,
+            'forward': 90.0,
+        }
         for label, instruction, target_angles in reference_specs:
             target_upper, target_forearm = arm_frames(*target_angles)
             print('\n' + '=' * 68)
@@ -414,9 +421,43 @@ class DualCalibrationNode(Node):
                     pose_upper_rotations.append(mean_rotation(held_R_u))
                     pose_forearm_rotations.append(mean_rotation(held_R_f))
 
-                if self._print_pose_repeatability(
-                        np.asarray(pose_upper_rotations),
-                        np.asarray(pose_forearm_rotations), label):
+                repeatable = self._print_pose_repeatability(
+                    np.asarray(pose_upper_rotations),
+                    np.asarray(pose_forearm_rotations), label)
+                forward_arc_angle_ok = True
+                if repeatable and label in forward_arc_expected_deg:
+                    down_rotations = np.asarray([
+                        rotation
+                        for accepted_label, rotation in zip(
+                            labels, upper_reference_rotations)
+                        if accepted_label == 'down'
+                    ])
+                    if len(down_rotations) != REFERENCE_REPEATS:
+                        raise RuntimeError(
+                            'DOWN reference must be accepted before forward poses')
+                    down_rotation = mean_rotation(down_rotations)
+                    pose_rotation = mean_rotation(
+                        np.asarray(pose_upper_rotations))
+                    observed_angle_deg = rotation_error_deg(
+                        down_rotation, pose_rotation)
+                    expected_angle_deg = forward_arc_expected_deg[label]
+                    angle_error_deg = abs(
+                        observed_angle_deg - expected_angle_deg)
+                    print(
+                        f'    forward-arc check: observed={observed_angle_deg:5.1f} '
+                        f'deg, expected about {expected_angle_deg:.0f} deg')
+                    if angle_error_deg > FORWARD_ARC_ANGLE_TOLERANCE_DEG:
+                        forward_arc_angle_ok = False
+                        print(
+                            f'[RETRY] {label.upper()} is about '
+                            f'{angle_error_deg:.1f} deg away from its intended '
+                            'forward-raise angle.')
+                        if observed_angle_deg > expected_angle_deg:
+                            print('Lower the upper arm and rebuild this pose.')
+                        else:
+                            print('Raise the upper arm farther and rebuild this pose.')
+
+                if repeatable and forward_arc_angle_ok:
                     upper_reference_positions.extend(pose_upper_positions)
                     forearm_reference_positions.extend(pose_forearm_positions)
                     upper_reference_rotations.extend(pose_upper_rotations)

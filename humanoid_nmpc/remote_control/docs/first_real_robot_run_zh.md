@@ -290,6 +290,11 @@ Reuse existing calibration only if no device moved? [y/N]:
 `FORWARD_30` 和 `FORWARD_60` 只约束大臂的位置轨迹。前臂方向、腕部旋转和肘角校正仍
 使用原有五个参考姿态，避免新增中间姿态改变已经验证过的前臂映射。
 
+这里的角度是大臂相对竖直下垂方向的角度。`FORWARD_30` 应明显低于 45°，大约只走完
+下垂到水平前举路程的三分之一；`FORWARD_60` 才是三分之二。程序会利用大臂接收器的
+相对转角检查这三个前举参考，偏离目标超过 12° 时只要求重采当前姿态。不要把手机或
+金属量角器靠近电磁接收器；需要辅助时使用纸质角度模板或让另一人在侧面观察。
+
 完成后必须看到：
 
 ```text
@@ -862,6 +867,12 @@ python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
   --execute
 ```
 
+安全桥默认在硬跟踪误差阈值前 1°启动滞后保护。例如
+`--max-tracking-error-deg 5` 时，活动关节的命令与实测角接近 4°差值后，桥接器会暂停
+继续扩大该关节命令，等待实机关节追上；误差回落后自动继续，并在终端标记
+`LAG-GUARD`。5°硬停止仍然保留。该机制根据实机跟踪能力动态减速，不改变人体目标，
+也不允许用它掩盖电磁丢帧、URDF 越界或姿态异常。
+
 输入 `TRACK` 后，在 20 秒接管期间保持当前基准姿态。只有看到
 `arm_sdk enabled; tracking ROS targets.` 后才按下面时间表动作：
 
@@ -1052,3 +1063,89 @@ ALIGN
 显示 `CLIPPED`，此时机器人不会执行超出边界的部分。通过后再把允许的初始差值按 15°、
 30°、45° 分级扩大，最后验证人体 `DOWN` 到机器人绝对 `DOWN`。不要从本节首测直接跳到
 五关节完整绝对对齐。
+
+## 19. 肩 Pitch 重力前馈首轮验证
+
+大臂前举时，如果命令保持不动后仍存在随前举角增大的稳态误差，这不是通信延迟或单纯的
+速度限制。安全桥提供一个默认关闭的实验参数 `--pitch-gravity-ff-nm`。它只作用于左肩
+Pitch，按 `tau = peak * sin(commanded_pitch)` 生成前馈力矩；`peak` 是肩 Pitch 为正负
+90° 时的力矩幅值。默认值为 0 N·m，首轮调试的软件硬上限为 3 N·m。没有显式写出该参数
+时，既有控制行为完全不变。
+
+首次只用 1 N·m 幅值，不直接使用 3 N·m。保持 RETARGET-REAL 与 UDP sender 连续运行，
+人体起始 Pitch 保持在约 0°。机器人使用吊架保护，现场人员继续持有急停。执行：
+
+```bash
+conda activate unitree-rl
+cd ~/humanoid_mpc_ws/src/wb_humanoid_mpc
+
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 60 \
+  --alignment-rate-deg-s 1 \
+  --max-rate-deg-s 1 \
+  --max-excursion-pitch-deg 35 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.75 \
+  --pitch-gravity-ff-nm 1.0 \
+  --absolute-alignment \
+  --active-joints pitch \
+  --execute
+```
+
+输入 `ALIGN` 后，在 `ABSOLUTE ALIGNMENT COMPLETE` 之前保持人体 Pitch 不动。完成后按以下
+顺序操作：
+
+1. 0° 附近保持 5 秒；
+2. 缓慢前举到 Pitch 约 -15°，保持 10 秒；
+3. 缓慢返回 0°，保持到程序结束。
+
+终端会额外显示 `ff=...Nm`。-15°、幅值 1 N·m 时理论前馈约为 -0.26 N·m。CSV 新增
+`command_pitch_gravity_ff_nm` 列。若动作方向错误、误差增大、出现振荡或异常声音，立即按
+宿主机 `Ctrl+C` 并准备使用急停，不得继续提高幅值。通过条件是方向正确、无振荡，且 -15°
+保持段的稳态误差不大于无前馈基线约 1.8°。只有比较完这份 CSV 后，才决定是否进行
+2 N·m 以及 -30° 的第二档测试。
+
+## 20. 肩 Roll 重力前馈分级验证
+
+肩 Roll 前馈默认关闭，由 `--roll-gravity-ff-nm` 显式启用。桥接器把接管瞬间测得的实机
+Roll 角作为 DOWN 零点，使用
+`tau = peak * sin(commanded_roll - takeover_down_roll)`。因此，每次启动桥接器前，机器人
+必须处于正常 DOWN 姿态，人体也保持当前标定的 DOWN；不能在手臂已经侧举时启动并把该姿态
+错误地记录为重力零点。首轮软件上限为 3 N·m。
+
+先在相同的 30° 安全包络和 1°/s 速度下依次比较 1、2、3 N·m。每档都执行：DOWN 保持
+5 秒，缓慢到 Roll 约 +20°、+30°、+40°并各保持 5 秒，然后按相反顺序返回 DOWN。若某档
+已经把高角度保持误差降到约 2°以内，不再继续增加；若误差变大、实际角超过命令、振荡或
+出现异常声音，立即停止，并且不得进入下一档。
+
+三个命令只改变下面这一项：
+
+```bash
+--roll-gravity-ff-nm 1.0
+--roll-gravity-ff-nm 2.0
+--roll-gravity-ff-nm 3.0
+```
+
+其余完整参数保持一致：
+
+```bash
+python3 humanoid_nmpc/remote_control/scripts/g1_arm_sdk_bridge.py \
+  enx6c1ff701509c \
+  --duration 105 \
+  --alignment-rate-deg-s 1 \
+  --max-rate-deg-s 1 \
+  --max-excursion-roll-deg 30 \
+  --max-body-speed-rad-s 0.30 \
+  --max-tracking-error-deg 5 \
+  --target-timeout 0.75 \
+  --roll-gravity-ff-nm 1.0 \
+  --absolute-alignment \
+  --active-joints roll \
+  --execute
+```
+
+终端会显示 `DOWN zero=... deg` 和当前 `ff=...Nm`；CSV 会记录
+`command_roll_gravity_ff_nm` 与 `roll_gravity_zero_rad`。分档测试只允许一次改变前馈幅值，
+动作、速度和保持时间必须相同，这样三份日志才能直接比较。

@@ -107,6 +107,143 @@ class G1ArmSdkBridgeTest(unittest.TestCase):
         for value, wanted in zip(actual, expected):
             self.assertAlmostEqual(value, wanted)
 
+    def test_tracking_guard_caps_step_at_soft_error_boundary(self):
+        desired = {index: 0.0 for index in BRIDGE.CONTROLLED_JOINTS}
+        actual = dict(desired)
+        pitch_index = BRIDGE.LEFT_ARM[0][0]
+        desired[pitch_index] = -0.06
+
+        guarded = BRIDGE.step_desired_arm_toward_with_tracking_guard(
+            desired,
+            (-1.0, 0.0, 0.0, 0.0, 0.0),
+            actual,
+            frozenset({'pitch'}),
+            max_step=0.02,
+            soft_tracking_error=0.07,
+        )
+
+        self.assertAlmostEqual(desired[pitch_index], -0.07)
+        self.assertIn('pitch', guarded)
+
+    def test_tracking_guard_pauses_outward_step_at_soft_boundary(self):
+        desired = {index: 0.0 for index in BRIDGE.CONTROLLED_JOINTS}
+        actual = dict(desired)
+        pitch_index = BRIDGE.LEFT_ARM[0][0]
+        desired[pitch_index] = -0.07
+
+        guarded = BRIDGE.step_desired_arm_toward_with_tracking_guard(
+            desired,
+            (-1.0, 0.0, 0.0, 0.0, 0.0),
+            actual,
+            frozenset({'pitch'}),
+            max_step=0.02,
+            soft_tracking_error=0.07,
+        )
+
+        self.assertAlmostEqual(desired[pitch_index], -0.07)
+        self.assertIn('pitch', guarded)
+
+    def test_tracking_guard_allows_motion_back_toward_actual(self):
+        desired = {index: 0.0 for index in BRIDGE.CONTROLLED_JOINTS}
+        actual = dict(desired)
+        pitch_index = BRIDGE.LEFT_ARM[0][0]
+        desired[pitch_index] = -0.08
+
+        guarded = BRIDGE.step_desired_arm_toward_with_tracking_guard(
+            desired,
+            (1.0, 0.0, 0.0, 0.0, 0.0),
+            actual,
+            frozenset({'pitch'}),
+            max_step=0.02,
+            soft_tracking_error=0.07,
+        )
+
+        self.assertAlmostEqual(desired[pitch_index], -0.06)
+        self.assertNotIn('pitch', guarded)
+
+    def test_pitch_gravity_feedforward_has_expected_direction_and_scale(self):
+        peak = 3.0
+
+        self.assertAlmostEqual(
+            BRIDGE.pitch_gravity_feedforward_nm(0.0, peak), 0.0)
+        self.assertAlmostEqual(
+            BRIDGE.pitch_gravity_feedforward_nm(-math.pi / 2.0, peak), -peak)
+        self.assertAlmostEqual(
+            BRIDGE.pitch_gravity_feedforward_nm(math.pi / 2.0, peak), peak)
+
+    def test_pitch_gravity_feedforward_matches_small_forward_raise(self):
+        torque = BRIDGE.pitch_gravity_feedforward_nm(
+            math.radians(-30.0), 1.0)
+
+        self.assertAlmostEqual(torque, -0.5)
+
+    def test_roll_gravity_feedforward_uses_down_reference(self):
+        down = math.radians(13.0)
+        peak = 3.0
+
+        self.assertAlmostEqual(
+            BRIDGE.roll_gravity_feedforward_nm(down, down, peak), 0.0)
+        self.assertAlmostEqual(
+            BRIDGE.roll_gravity_feedforward_nm(
+                down + math.pi / 2.0, down, peak),
+            peak,
+        )
+        self.assertAlmostEqual(
+            BRIDGE.roll_gravity_feedforward_nm(
+                down - math.pi / 2.0, down, peak),
+            -peak,
+        )
+
+    def test_fill_command_applies_feedforward_only_to_left_pitch(self):
+        class MotorCommand:
+            tau = 0.0
+            q = 0.0
+            dq = 0.0
+            kp = 0.0
+            kd = 0.0
+
+        command = types.SimpleNamespace(
+            motor_cmd=[MotorCommand() for _ in range(30)])
+        desired = {index: 0.0 for index in BRIDGE.CONTROLLED_JOINTS}
+        pitch_index = BRIDGE.LEFT_ARM[0][0]
+        desired[pitch_index] = math.radians(-30.0)
+
+        BRIDGE.fill_command(
+            command, desired, weight=0.5, pitch_gravity_ff_nm=2.0)
+
+        self.assertAlmostEqual(command.motor_cmd[pitch_index].tau, -0.5)
+        for index in BRIDGE.CONTROLLED_JOINTS:
+            if index != pitch_index:
+                self.assertAlmostEqual(command.motor_cmd[index].tau, 0.0)
+
+    def test_fill_command_applies_roll_feedforward_relative_to_down(self):
+        class MotorCommand:
+            tau = 0.0
+            q = 0.0
+            dq = 0.0
+            kp = 0.0
+            kd = 0.0
+
+        command = types.SimpleNamespace(
+            motor_cmd=[MotorCommand() for _ in range(30)])
+        desired = {index: 0.0 for index in BRIDGE.CONTROLLED_JOINTS}
+        roll_index = BRIDGE.LEFT_ARM[1][0]
+        down = math.radians(13.0)
+        desired[roll_index] = down + math.radians(30.0)
+
+        BRIDGE.fill_command(
+            command,
+            desired,
+            weight=0.5,
+            roll_gravity_ff_nm=2.0,
+            roll_gravity_zero_rad=down,
+        )
+
+        self.assertAlmostEqual(command.motor_cmd[roll_index].tau, 0.5)
+        for index in BRIDGE.CONTROLLED_JOINTS:
+            if index != roll_index:
+                self.assertAlmostEqual(command.motor_cmd[index].tau, 0.0)
+
     def test_active_difference_ignores_inactive_joints(self):
         first = (0.0, 1.0, 2.0, 0.3, 4.0)
         second = (0.0, 0.0, 0.0, 0.1, 0.0)

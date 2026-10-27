@@ -35,6 +35,8 @@ ARM_SDK_WEIGHT = 29
 CONTROL_PERIOD = 0.02
 KP = 60.0
 KD = 1.5
+MAX_PITCH_GRAVITY_FF_NM = 3.0
+MAX_ROLL_GRAVITY_FF_NM = 3.0
 TAKEOVER_DURATION = 20.0
 RELEASE_SECONDS_PER_UNIT_WEIGHT = 20.0
 
@@ -323,10 +325,81 @@ def step_desired_arm_toward(desired, target, max_step):
         desired[index] += min(max(difference, -max_step), max_step)
 
 
-def fill_command(command, desired, weight: float) -> None:
+def step_desired_arm_toward_with_tracking_guard(
+        desired, target, actual, active_joint_names, max_step,
+        soft_tracking_error):
+    """Rate-limit targets and pause motion before following error is unsafe.
+
+    The hard tracking-error check remains authoritative.  This softer guard
+    only removes the part of a step that would move an active command farther
+    away from the measured joint once the remaining error headroom is used.
+    Motion toward the measured position is always allowed, so the robot can
+    catch up instead of accumulating error until the hard stop fires.
+
+    Returns a mapping of joints whose outward step was limited to their
+    pre-step absolute tracking error.
+    """
+    guarded = {}
+    for value, (index, name, _limits) in zip(target, LEFT_ARM):
+        difference = float(value) - float(desired[index])
+        step = min(max(difference, -max_step), max_step)
+        if name in active_joint_names and abs(step) > 0.0:
+            error = float(desired[index]) - float(actual[index])
+            proposed_error = error + step
+            moving_farther_away = abs(proposed_error) > abs(error)
+            if moving_farther_away and abs(proposed_error) > soft_tracking_error:
+                remaining_headroom = max(
+                    0.0, soft_tracking_error - abs(error))
+                step = math.copysign(
+                    min(abs(step), remaining_headroom), step)
+                guarded[name] = abs(error)
+        desired[index] += step
+    return guarded
+
+
+def pitch_gravity_feedforward_nm(pitch_rad: float, peak_torque_nm: float) -> float:
+    """Return a conservative shoulder-pitch gravity feedforward torque.
+
+    G1 pitch zero is the approximately vertical-down arm configuration.  The
+    observed forward-raise direction is negative, so ``peak*sin(q)`` supplies
+    negative lifting torque for a negative pitch target and naturally returns
+    to zero near the down pose.  ``peak_torque_nm`` is the magnitude that would
+    be applied at +/-90 degrees; the commissioning CLI limits it separately.
+    """
+    return float(peak_torque_nm) * math.sin(float(pitch_rad))
+
+
+def roll_gravity_feedforward_nm(roll_rad: float, down_reference_rad: float,
+                                peak_torque_nm: float) -> float:
+    """Return conservative shoulder-roll gravity feedforward torque.
+
+    Shoulder-roll joint zero is not the observed vertical-down posture on the
+    real G1.  Use the measured roll angle captured at takeover as the zero-
+    torque DOWN reference.  Positive roll raises the left arm outward in the
+    commissioned mapping, so the sine model supplies positive lifting torque.
+    """
+    relative_roll = float(roll_rad) - float(down_reference_rad)
+    return float(peak_torque_nm) * math.sin(relative_roll)
+
+
+def fill_command(command, desired, weight: float,
+                 pitch_gravity_ff_nm: float = 0.0,
+                 roll_gravity_ff_nm: float = 0.0,
+                 roll_gravity_zero_rad: float = 0.0) -> None:
+    pitch_index = LEFT_ARM[0][0]
+    roll_index = LEFT_ARM[1][0]
     for index in CONTROLLED_JOINTS:
         motor = command.motor_cmd[index]
         motor.tau = 0.0
+        if index == pitch_index and pitch_gravity_ff_nm > 0.0:
+            # Ramp the explicit feedforward together with arm_sdk ownership so
+            # takeover and release cannot introduce a torque step.
+            motor.tau = weight * pitch_gravity_feedforward_nm(
+                desired[index], pitch_gravity_ff_nm)
+        elif index == roll_index and roll_gravity_ff_nm > 0.0:
+            motor.tau = weight * roll_gravity_feedforward_nm(
+                desired[index], roll_gravity_zero_rad,
+                roll_gravity_ff_nm)
         motor.q = desired[index]
         motor.dq = 0.0
         motor.kp = KP
@@ -334,8 +407,13 @@ def fill_command(command, desired, weight: float) -> None:
     command.motor_cmd[ARM_SDK_WEIGHT].q = min(max(weight, 0.0), 1.0)
 
 
-def publish_command(publisher, command, crc, desired, weight: float) -> None:
-    fill_command(command, desired, weight)
+def publish_command(publisher, command, crc, desired, weight: float,
+                    pitch_gravity_ff_nm: float = 0.0,
+                    roll_gravity_ff_nm: float = 0.0,
+                    roll_gravity_zero_rad: float = 0.0) -> None:
+    fill_command(
+        command, desired, weight, pitch_gravity_ff_nm,
+        roll_gravity_ff_nm, roll_gravity_zero_rad)
     command.crc = crc.Crc(command)
     publisher.Write(command)
 
@@ -351,6 +429,9 @@ def tracking_log_header():
         "imu_roll_rad",
         "imu_pitch_rad",
         "imu_yaw_rad",
+        "command_pitch_gravity_ff_nm",
+        "command_roll_gravity_ff_nm",
+        "roll_gravity_zero_rad",
     ]
     for _index, name, _limits in LEFT_ARM:
         columns.extend((
@@ -365,7 +446,9 @@ def tracking_log_header():
 
 
 def append_tracking_log(records, state, desired, target_receiver,
-                        applied_target) -> None:
+                        applied_target, pitch_gravity_ff_nm=0.0,
+                        roll_gravity_ff_nm=0.0,
+                        roll_gravity_zero_rad=0.0) -> None:
     """Record one synchronized bridge-loop sample without doing disk I/O."""
     monotonic_ns = time.monotonic_ns()
     sent_ns = target_receiver.sent_monotonic_ns
@@ -380,6 +463,12 @@ def append_tracking_log(records, state, desired, target_receiver,
         transport_latency_ms,
         target_receiver.age() * 1000.0,
         *[float(value) for value in state.imu_state.rpy[:3]],
+        pitch_gravity_feedforward_nm(
+            desired[LEFT_ARM[0][0]], pitch_gravity_ff_nm),
+        roll_gravity_feedforward_nm(
+            desired[LEFT_ARM[1][0]], roll_gravity_zero_rad,
+            roll_gravity_ff_nm),
+        float(roll_gravity_zero_rad),
     ]
     for source_value, applied_value, (index, _name, _limits) in zip(
             target_receiver.target, applied_target, LEFT_ARM):
@@ -426,6 +515,7 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
         index: state.motor_state[index].q
         for index in CONTROLLED_JOINTS
     }
+    roll_gravity_zero_rad = float(initial[LEFT_ARM[1][0]])
     desired = dict(initial)
     baseline_target = wait_for_target(target_receiver, 5.0)
     first_target = map_target_to_robot(
@@ -469,6 +559,28 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
         )
         + " deg"
     )
+    print(
+        "Tracking lag guard: command slowdown begins at "
+        f"{math.degrees(args.soft_tracking_error_rad):.1f} deg; hard stop "
+        f"remains {args.max_tracking_error_deg:.1f} deg."
+    )
+    if args.pitch_gravity_ff_nm > 0.0:
+        print(
+            "Pitch gravity feedforward: ENABLED; peak="
+            f"{args.pitch_gravity_ff_nm:.2f} N m at +/-90 deg, "
+            "tau=peak*sin(commanded pitch)."
+        )
+    else:
+        print("Pitch gravity feedforward: disabled (0.00 N m).")
+    if args.roll_gravity_ff_nm > 0.0:
+        print(
+            "Roll gravity feedforward: ENABLED; peak="
+            f"{args.roll_gravity_ff_nm:.2f} N m at 90 deg from DOWN, "
+            f"DOWN zero={math.degrees(roll_gravity_zero_rad):+.2f} deg, "
+            "tau=peak*sin(commanded roll - DOWN zero)."
+        )
+    else:
+        print("Roll gravity feedforward: disabled (0.00 N m).")
     if args.absolute_alignment:
         print(
             "ABSOLUTE ALIGNMENT is ENABLED. Keep the current human pose still "
@@ -522,7 +634,10 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
             validate_tracking_state(state, desired, args)
             current_weight = smoothstep(progress)
             publish_command(
-                publisher, command, crc, desired, current_weight
+                publisher, command, crc, desired, current_weight,
+                args.pitch_gravity_ff_nm,
+                args.roll_gravity_ff_nm,
+                roll_gravity_zero_rad,
             )
             if now >= next_log:
                 print(
@@ -630,11 +745,19 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
 
                 step_desired_arm_toward(
                     desired, frozen_alignment_target, alignment_max_step)
-                publish_command(publisher, command, crc, desired, 1.0)
+                publish_command(
+                    publisher, command, crc, desired, 1.0,
+                    args.pitch_gravity_ff_nm,
+                    args.roll_gravity_ff_nm,
+                    roll_gravity_zero_rad,
+                )
                 current_weight = 1.0
                 append_tracking_log(
                     tracking_records, state, desired, target_receiver,
                     frozen_alignment_target,
+                    args.pitch_gravity_ff_nm,
+                    args.roll_gravity_ff_nm,
+                    roll_gravity_zero_rad,
                 )
 
                 actual_error, actual_error_name = max(
@@ -711,13 +834,32 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
             )
             bounded_target = bound_target_to_safe_range(
                 applied_target, initial, args.max_excursion_by_name)
-            step_desired_arm_toward(desired, bounded_target, max_step)
+            actual_positions = {
+                index: state.motor_state[index].q
+                for index in CONTROLLED_JOINTS
+            }
+            lag_guarded = step_desired_arm_toward_with_tracking_guard(
+                desired,
+                bounded_target,
+                actual_positions,
+                args.active_joint_names,
+                max_step,
+                args.soft_tracking_error_rad,
+            )
 
-            publish_command(publisher, command, crc, desired, 1.0)
+            publish_command(
+                publisher, command, crc, desired, 1.0,
+                args.pitch_gravity_ff_nm,
+                args.roll_gravity_ff_nm,
+                roll_gravity_zero_rad,
+            )
             current_weight = 1.0
             append_tracking_log(
                 tracking_records, state, desired, target_receiver,
                 applied_target,
+                args.pitch_gravity_ff_nm,
+                args.roll_gravity_ff_nm,
+                roll_gravity_zero_rad,
             )
 
             if now >= next_log:
@@ -739,6 +881,19 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
                             f"{math.degrees(bounded_value):+.1f}/"
                             f"{math.degrees(desired[index]):+.1f}/"
                             f"{math.degrees(state.motor_state[index].q):+.1f}"
+                            f" err={math.degrees(abs(desired[index] - state.motor_state[index].q)):.1f}"
+                            + (
+                                f" ff={pitch_gravity_feedforward_nm(desired[index], args.pitch_gravity_ff_nm):+.2f}Nm"
+                                if name == "pitch" and args.pitch_gravity_ff_nm > 0.0
+                                else ""
+                            )
+                            + (
+                                " ff="
+                                f"{roll_gravity_feedforward_nm(desired[index], roll_gravity_zero_rad, args.roll_gravity_ff_nm):+.2f}Nm"
+                                if name == "roll" and args.roll_gravity_ff_nm > 0.0
+                                else ""
+                            )
+                            + (" LAG-GUARD" if name in lag_guarded else "")
                             + (" CLIPPED" if clipped else "")
                         )
                 print(
@@ -776,6 +931,9 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
                 crc,
                 release_pose,
                 release_weight,
+                args.pitch_gravity_ff_nm,
+                args.roll_gravity_ff_nm,
+                roll_gravity_zero_rad,
             )
             if now >= next_log:
                 print(f"release weight={release_weight:.2f}")
@@ -783,7 +941,12 @@ def run_bridge(args, state_receiver, target_receiver, tracking_records) -> None:
             next_tick += CONTROL_PERIOD
             time.sleep(max(0.0, next_tick - time.monotonic()))
         for _ in range(5):
-            publish_command(publisher, command, crc, release_pose, 0.0)
+            publish_command(
+                publisher, command, crc, release_pose, 0.0,
+                args.pitch_gravity_ff_nm,
+                args.roll_gravity_ff_nm,
+                roll_gravity_zero_rad,
+            )
             time.sleep(CONTROL_PERIOD)
         print("arm_sdk weight returned to zero.")
 
@@ -824,6 +987,36 @@ def main() -> int:
     parser.add_argument("--max-body-speed-rad-s", type=float, default=0.3)
     parser.add_argument("--max-observed-arm-speed-deg-s", type=float, default=60.0)
     parser.add_argument("--max-tracking-error-deg", type=float, default=15.0)
+    parser.add_argument(
+        "--tracking-error-slowdown-margin-deg",
+        type=float,
+        default=1.0,
+        help=(
+            "start pausing outward command motion this many degrees before "
+            "the hard tracking-error stop"
+        ),
+    )
+    parser.add_argument(
+        "--pitch-gravity-ff-nm",
+        type=float,
+        default=0.0,
+        help=(
+            "experimental left-shoulder-pitch gravity feedforward amplitude "
+            "in N m at +/-90 degrees; default 0 disables it and the initial "
+            f"commissioning cap is {MAX_PITCH_GRAVITY_FF_NM:.1f} N m"
+        ),
+    )
+    parser.add_argument(
+        "--roll-gravity-ff-nm",
+        type=float,
+        default=0.0,
+        help=(
+            "experimental left-shoulder-roll gravity feedforward amplitude "
+            "in N m at 90 degrees from the measured takeover/DOWN angle; "
+            "default 0 disables it and the initial commissioning cap is "
+            f"{MAX_ROLL_GRAVITY_FF_NM:.1f} N m"
+        ),
+    )
     mapping_group = parser.add_mutually_exclusive_group()
     mapping_group.add_argument(
         "--relative-to-start",
@@ -907,6 +1100,31 @@ def main() -> int:
     args = parser.parse_args()
     args.active_joint_names = frozenset(args.active_joints)
 
+    if (not math.isfinite(args.pitch_gravity_ff_nm)
+            or args.pitch_gravity_ff_nm < 0.0
+            or args.pitch_gravity_ff_nm > MAX_PITCH_GRAVITY_FF_NM):
+        parser.error(
+            "--pitch-gravity-ff-nm must be finite and in [0, "
+            f"{MAX_PITCH_GRAVITY_FF_NM:.1f}]"
+        )
+    if (args.pitch_gravity_ff_nm > 0.0
+            and "pitch" not in args.active_joint_names):
+        parser.error(
+            "--pitch-gravity-ff-nm requires pitch in --active-joints"
+        )
+    if (not math.isfinite(args.roll_gravity_ff_nm)
+            or args.roll_gravity_ff_nm < 0.0
+            or args.roll_gravity_ff_nm > MAX_ROLL_GRAVITY_FF_NM):
+        parser.error(
+            "--roll-gravity-ff-nm must be finite and in [0, "
+            f"{MAX_ROLL_GRAVITY_FF_NM:.1f}]"
+        )
+    if (args.roll_gravity_ff_nm > 0.0
+            and "roll" not in args.active_joint_names):
+        parser.error(
+            "--roll-gravity-ff-nm requires roll in --active-joints"
+        )
+
     if args.execute and not (args.relative_to_start or args.absolute_alignment):
         parser.error(
             "--execute requires an explicit mapping mode: use "
@@ -921,6 +1139,8 @@ def main() -> int:
         "--max-body-speed-rad-s": args.max_body_speed_rad_s,
         "--max-observed-arm-speed-deg-s": args.max_observed_arm_speed_deg_s,
         "--max-tracking-error-deg": args.max_tracking_error_deg,
+        "--tracking-error-slowdown-margin-deg": (
+            args.tracking_error_slowdown_margin_deg),
         "--alignment-rate-deg-s": args.alignment_rate_deg_s,
         "--alignment-stability-seconds": args.alignment_stability_seconds,
         "--alignment-stability-deg": args.alignment_stability_deg,
@@ -937,6 +1157,15 @@ def main() -> int:
             f"--alignment-stability-seconds must be less than the "
             f"{TAKEOVER_DURATION:.0f}-second takeover duration"
         )
+    if (args.tracking_error_slowdown_margin_deg >=
+            args.max_tracking_error_deg):
+        parser.error(
+            "--tracking-error-slowdown-margin-deg must be smaller than "
+            "--max-tracking-error-deg"
+        )
+    args.soft_tracking_error_rad = math.radians(
+        args.max_tracking_error_deg
+        - args.tracking_error_slowdown_margin_deg)
 
     args.max_excursion_by_name = {}
     for joint_name in LEFT_ARM_NAMES:
