@@ -1,0 +1,63 @@
+{
+  "units": "mm",
+  "coordinate_convention": {
+    "+Y": "proximal: shoulder for ID10, elbow for ID20",
+    "-Y": "distal and receiver insertion/charging-port end",
+    "Z=0": "flat ArUco marker face"
+  },
+  "parameters": {
+    "marker_size": 77.5,
+    "plate_width": 96.0,
+    "plate_length": 90.0,
+    "plate_thickness": 2.6,
+    "plate_corner_radius": 4.0,
+    "receiver_width": 23.0,
+    "receiver_thickness": 13.0,
+    "receiver_length": 70.0,
+    "side_clearance": 0.35,
+    "thickness_clearance": 0.4,
+    "switch_face_gap": 2.5,
+    "wall_thickness": 2.4,
+    "lower_lip_overhang": 0.8,
+    "upper_lip_overhang": 1.3,
+    "lip_thickness": 2.0,
+    "distal_edge_recess": 3.0,
+    "length_clearance": 0.5,
+    "retaining_pin_diameter": 2.1,
+    "strap_width": 25.0,
+    "strap_slot_length": 27.0,
+    "strap_slot_width": 3.5,
+    "strap_slot_x": 43.5,
+    "strap_slot_y": 23.0,
+    "support_rail_width": 13.0,
+    "support_rail_length": 70.0,
+    "support_rail_x": 31.0,
+    "support_rail_printed_height": 18.0,
+    "recommended_foam_thickness": 3.0,
+    "coupon_width": 38.0,
+    "coupon_length": 20.0
+  },
+  "derived": {
+    "inner_width": 23.7,
+    "receiver_face_z": 5.1,
+    "receiver_outer_z": 18.1,
+    "upper_lip_under_z": 18.5,
+    "channel_top_z": 20.5,
+    "distal_plate_edge_y": -45.0,
+    "receiver_distal_y": -42.0,
+    "receiver_proximal_y": 28.0,
+    "stop_inner_y": 28.5,
+    "stop_outer_y": 30.9,
+    "channel_center_y": -7.050000000000001,
+    "channel_length": 75.9
+  },
+  "printing": {
+    "recommended_material": "PETG",
+    "prototype_material": "PLA",
+    "layer_height": 0.2,
+    "perimeters": 3,
+    "infill_percent": "25-35",
+    "orientation": "print flat marker face on the build plate",
+    "supports": "none expected"
+  }
+}

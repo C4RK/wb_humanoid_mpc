@@ -1,0 +1,39 @@
+{
+  "video": "/home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/humanoid_nmpc/remote_control/scripts/IMG_8737.mp4",
+  "annotated_video": "/home/kunwang/humanoid_mpc_ws/src/wb_humanoid_mpc/humanoid_nmpc/remote_control/scripts/IMG_8737_aruco_check.mp4",
+  "dictionary": "DICT_4X4_50",
+  "nominal_fps": 29.97566909975669,
+  "frame_size": [
+    1280,
+    716
+  ],
+  "total_frames": 308,
+  "expected_ids": [
+    10,
+    20
+  ],
+  "all_detected_ids": [
+    10,
+    20,
+    22
+  ],
+  "all_expected_detection_rate": 1.0,
+  "per_id": {
+    "10": {
+      "detected_frames": 308,
+      "detection_rate": 1.0,
+      "median_edge_pixels": 64.8031590932824,
+      "p05_edge_pixels": 63.02509275612988,
+      "longest_gap_frames": 0,
+      "longest_gap_seconds_nominal": 0.0
+    },
+    "20": {
+      "detected_frames": 308,
+      "detection_rate": 1.0,
+      "median_edge_pixels": 62.257300377523364,
+      "p05_edge_pixels": 60.342431182812646,
+      "longest_gap_frames": 0,
+      "longest_gap_seconds_nominal": 0.0
+    }
+  }
+}
