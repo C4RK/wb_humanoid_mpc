@@ -1,0 +1,278 @@
+% 第3章 LaTeX 章节片段。
+% 建议主文档使用 XeLaTeX 或 LuaLaTeX 编译中文，并加载：
+% \usepackage{amsmath,amssymb,booktabs,tabularx,enumitem,hyperref}
+
+\chapter{系统总体设计}
+\label{chap:system_design_modeling}
+
+\begin{quote}
+\itshape
+写作说明：本章只说明研究对象、系统组成、数据流和功能边界，不提前展开第4章的姿态估计
+算法，也不重复第5章的真机安全策略。本文的真机站立和平衡由 Unitree G1 官方 FSM 500
+提供，本研究负责人体左臂测量、五自由度估计和受限手臂目标生成。
+\end{quote}
+
+\section{研究目标与系统边界}
+\label{sec:ch3_objectives}
+
+\subsection{研究目标}
+\label{subsec:ch3_research_goal}
+
+本研究面向站立状态下 Unitree G1 人形机器人的左臂实时动作重定向。操作者佩戴一个固定在
+躯干上的电磁发射器，以及分别固定在左大臂和左前臂上的两个接收器。系统由两路接收器位姿
+估计人体左臂五自由度运动，并把估计结果转换为 G1 左臂能够安全执行的关节目标。
+
+设时刻 $k$ 的传感器输入为
+\begin{equation}
+  \boldsymbol y_k=
+  \left\{{}^{T}\boldsymbol p_{U,k},{}^{T}\boldsymbol R_{U,k},
+  {}^{T}\boldsymbol p_{F,k},{}^{T}\boldsymbol R_{F,k}\right\},
+  \label{eq:ch3_sensor_input}
+\end{equation}
+人体状态输出为
+\begin{equation}
+  \hat{\boldsymbol q}_{h,k}=
+  \begin{bmatrix}q_p&q_r&q_y&q_e&q_w\end{bmatrix}^{\mathrm T}.
+  \label{eq:ch3_human_output}
+\end{equation}
+五个分量依次表示肩部 pitch、shoulder roll、shoulder yaw、肘部伸展量和前臂旋前/旋后。
+估计状态经过机器人关节约束、碰撞保护和真机安全桥后形成最终命令
+$\boldsymbol q_{c,k}$。
+
+\subsection{系统边界}
+\label{subsec:ch3_scope}
+
+本文只主动控制 G1 左臂五个关节，不控制手指，不恢复完整人体骨架，也不研究机器人行走。
+人体与机器人臂长不同，因此研究目标是保持主要关节动作语义，而不是让两者手部在世界坐标
+中绝对重合。
+
+真机实验中，G1 官方 FSM 500 负责双足站立和平衡；本研究通过 Arm SDK 修改受限的左臂
+参考。论文中的机身姿态和是否踏步只用于监测系统运行状态，不能被解释为本文提出了新的
+全身平衡控制器。
+
+\subsection{设计要求}
+\label{subsec:ch3_design_requirements}
+
+\begin{table}[htbp]
+  \centering
+  \caption{动作重定向系统的设计要求}
+  \label{tab:ch3_design_requirements}
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    编号 & 设计要求 & 工程含义 \\
+    \midrule
+    R1 & 适应重复佩戴 & 重新安装后通过本次标定恢复坐标关系 \\
+    R2 & 表达主要左臂动作 & 输出与 G1 左臂一致的五自由度状态 \\
+    R3 & 满足实时交互 & 以约 $50\,\mathrm{Hz}$ 处理同步位姿并限制陈旧数据 \\
+    R4 & 处理不可观测区域 & 在侧举和直臂退化区域采用可解释策略 \\
+    R5 & 分层限制真机风险 & 分别检查标定、目标、通信和机器人反馈 \\
+    R6 & 支持复现实验 & 保存原始测量、中间变量、命令和编码器反馈 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\section{系统硬件组成}
+\label{sec:ch3_hardware}
+
+\subsection{电磁位姿测量系统}
+\label{subsec:ch3_em_system}
+
+电磁系统由一个发射器和两个接收器组成。发射器固定在操作者胸部，建立随躯干运动的共同
+参考坐标；大臂接收器固定在左肘上方，前臂接收器固定在左腕上方。每个接收器输出相对于
+发射器的三维位置和姿态。
+
+电磁测量不依赖场景纹理和光照，也不会因人体自身遮挡而失去视线，但仍会受到金属环境、
+通信异常、绑带滑动和软组织相对运动影响。因此，原始接收器位姿不能直接视为人体骨骼姿态，
+需要针对每次安装重新标定。
+
+采用两个接收器是为了同时获得大臂和前臂信息。大臂方向用于恢复肩部主要方向，前臂相对
+大臂的几何关系用于求解肘角和肩部轴向旋转，前臂接收器剩余的轴向旋转用于估计旋前/旋后。
+
+\subsection{Unitree G1 平台}
+\label{subsec:ch3_g1_platform}
+
+本文控制的 G1 左臂关节依次为 left shoulder pitch、left shoulder roll、left shoulder
+yaw、left elbow 和 left wrist roll。人体估计状态与这五个关节采用相同顺序和动作语义，
+但人体关节与机器人机械轴并非解剖学等价。机器人关节范围、初始姿态、惯量和碰撞几何均
+与人体不同，因而需要第5章所述的安全映射。
+
+\subsection{计算与通信设备}
+\label{subsec:ch3_computing_communication}
+
+ROS 2 采集、标定和重定向程序运行在 Docker 环境中，Unitree SDK 和真机安全桥运行在
+宿主机。两者通过本机回环 UDP 传递五关节目标。真机通过独立有线网卡连接，电磁接收器通过
+无线热点连接。双手机和刚性视觉标记只用于第6章的独立评价，不进入机器人控制闭环。
+
+\section{系统总体架构}
+\label{sec:ch3_overall_architecture}
+
+\subsection{功能分层}
+\label{subsec:ch3_functional_layers}
+
+系统划分为以下五层：
+\begin{enumerate}[label=\arabic*)]
+  \item 测量层读取两个接收器，检查设备状态和数据有效性，形成同步位姿对；
+  \item 标定与人体估计层根据本次安装参数恢复肢段方向和五自由度人体状态；
+  \item 机器人重定向层执行关节语义映射、关节限位、连续性调理和碰撞保护；
+  \item 真机执行层经 UDP 和 Arm SDK 完成接管、对齐、跟随和安全释放；
+  \item 评价层比较视觉参考与人体估计、机器人命令与编码器反馈。
+\end{enumerate}
+
+总体信息流如图~\ref{fig:ch3_system_architecture} 所示。
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\centering
+    人体左臂 $\rightarrow$ 双 WEMT 接收器 $\rightarrow$ 同步采集与本次安装标定
+    $\rightarrow$ 五自由度人体状态估计\\[0.4em]
+    $\rightarrow$ 关节映射与碰撞保护 $\rightarrow$ ROS 2/UDP/Arm SDK
+    $\rightarrow$ Unitree G1 左臂\\[0.4em]
+    双手机与刚性标记 $\rightarrow$ 独立视觉参考（仅用于离线评价）。}}
+  \caption{系统总体架构与数据流（待替换为正式绘图）}
+  \label{fig:ch3_system_architecture}
+\end{figure}
+
+\subsection{各层输入与输出}
+\label{subsec:ch3_layer_interfaces}
+
+\begin{table}[htbp]
+  \centering
+  \caption{系统各层输入、输出与异常处理}
+  \label{tab:ch3_layer_interfaces}
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    功能层 & 输入 & 输出 & 主要异常处理 \\
+    \midrule
+    双接收器采集 & 两个设备流 & 两个同步位姿 & 拒绝断连、陈旧或异常四元数 \\
+    安装级标定 & 同步位姿、参考动作 & YAML、参考 NPZ & 质量不通过则拒绝真机使用 \\
+    人体状态估计 & 同步位姿、标定参数 & 五自由度、可观测度 & 无效方向时停止更新 \\
+    安全重定向 & 人体状态、上一安全目标 & 安全五关节目标 & 限位、限速、碰撞投影或保持 \\
+    真机安全桥 & UDP 目标、LowState & Arm SDK 命令、CSV & 超时或跟踪异常时释放 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{三段可独立评价的关系}
+\label{subsec:ch3_three_evaluation_stages}
+
+系统性能不能用一个“总误差”概括，而应拆分为
+\begin{equation}
+  \boldsymbol y\xrightarrow{\mathcal E}\hat{\boldsymbol q}_h
+  \xrightarrow{\mathcal S\circ\mathcal R}\boldsymbol q_c
+  \xrightarrow{\mathrm{G1}}\boldsymbol q_{\mathrm{act}}.
+  \label{eq:ch3_information_pipeline}
+\end{equation}
+第一段比较电磁估计与独立视觉参考；第二段分析限位和碰撞保护对目标的修改；第三段比较
+安全命令与 G1 编码器状态。较小的真机关节跟踪误差不能证明人体估计准确，较小的标定残差
+也不能替代独立视觉评价。
+
+\section{软件节点与数据流}
+\label{sec:ch3_software_dataflow}
+
+\subsection{主要节点}
+\label{subsec:ch3_main_nodes}
+
+\begin{table}[htbp]
+  \centering
+  \caption{主要软件节点与职责}
+  \label{tab:ch3_main_nodes}
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    节点或进程 & 运行位置 & 主要职责 \\
+    \midrule
+    \texttt{dual\_em\_tracker\_node} & Docker & 发布两路同步位姿 \\
+    \texttt{dual\_calibration\_node} & Docker & 本次安装标定与质量检查 \\
+    \texttt{dual\_retargeting\_node} & Docker & 五自由度估计与安全目标生成 \\
+    \texttt{arm\_target\_udp\_sender} & Docker & 转发真机关节目标 \\
+    \texttt{g1\_arm\_sdk\_bridge.py} & 宿主机 & LowState、接管、对齐、监测与释放 \\
+    Unitree DDS & 宿主机/G1 & Arm SDK 命令与机器人状态 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+采集、标定和重定向使用独立进程，是因为它们具有不同生命周期。采集节点只负责可信的同步
+测量；标定节点在每次安装开始时运行；重定向节点只在标定完成后持续工作。
+
+\subsection{真机数据链}
+\label{subsec:ch3_real_robot_path}
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\centering\ttfamily
+    /em/upper\_arm\_pose + /em/forearm\_pose
+    $\rightarrow$ dual\_retargeting\_node
+    $\rightarrow$ /arm\_joint\_target\\[0.3em]
+    $\rightarrow$ arm\_target\_udp\_sender
+    $\rightarrow$ UDP 127.0.0.1:15000
+    $\rightarrow$ g1\_arm\_sdk\_bridge.py
+    $\rightarrow$ rt/arm\_sdk $\rightarrow$ G1.}}
+  \caption{ROS 2 到 G1 的真机数据链}
+  \label{fig:ch3_real_robot_path}
+\end{figure}
+
+Docker 内的 ROS 2 程序不直接持有真机 DDS 控制权。宿主机安全桥默认只读，只有接收到新鲜
+目标、机器人状态正常并由操作者明确确认后，才逐步建立 Arm SDK 控制权。
+
+\subsection{时间与数据新鲜度}
+\label{subsec:ch3_data_freshness}
+
+系统各环节异步运行，因此每层分别检查数据新鲜度。采集层要求两个接收器都产生新硬件帧；
+重定向层要求两个 ROS 消息具有共同时间戳；UDP 发送器只转发新目标；真机桥计算目标年龄，
+并在目标超时后释放控制权。设连续有效输出时间为 $t_k$，实际更新间隔为
+\begin{equation}
+  \Delta t_k=t_k-t_{k-1}.
+  \label{eq:ch3_update_interval}
+\end{equation}
+所有滤波和速度限制使用实际 $\Delta t_k$，不假定数据始终严格以 $50\,\mathrm{Hz}$ 到达。
+
+\section{系统运行流程与安全边界}
+\label{sec:ch3_operation_safety}
+
+\subsection{分阶段运行流程}
+\label{subsec:ch3_operating_sequence}
+
+系统按以下顺序运行：设备安装、双接收器在线检查、本次安装标定、dry-run 动作方向检查、
+G1 LowState 与 FSM 500 检查、安全桥只读检查、人工确认和绝对对齐、受限实时跟随及平滑
+释放。后续状态不能反过来证明前一状态合格；例如机器人没有跌倒并不证明人体标定准确。
+
+\subsection{标定参数生命周期}
+\label{subsec:ch3_calibration_lifecycle}
+
+标定参数只对一次物理安装有效。发射器或任一接收器被拆下、重新绑扎或在固定件中转动后，
+旧标定只能用于离线分析，不能继续驱动真机。标定结果分为拒绝使用、仅允许诊断和具备真机
+候选资格三类。具备候选资格仍需通过动作方向、通信和现场安全检查。
+
+\subsection{分层安全边界}
+\label{subsec:ch3_layered_safety_boundary}
+
+采集层拒绝断连、陈旧数据和异常四元数；标定层拒绝低质量安装；人体估计层处理几何
+不可观测性和模型失配；重定向层执行关节限位、限速和躯干碰撞保护；真机桥监测目标年龄、
+跟踪误差、关节速度和机身状态；软件无法处理的即时危险由现场实体急停终止。
+
+软件保护用于降低实验风险，不构成对所有机械、电气和环境危险的形式化安全证明，也不能
+替代吊架、手柄操作员和实体急停。
+
+\subsection{数据记录与可追溯性}
+\label{subsec:ch3_traceability}
+
+每轮实验分别保存原始接收器位姿、标定参数、人体肢段方向、五自由度估计、碰撞前后目标、
+UDP 时间、真机安全命令、编码器反馈、IMU 状态和安全事件。正式实验还记录代码版本、配置
+文件、安装编号和动作时间表。失败试次同样保留，避免只选择成功试次而高估系统性能。
+
+\section{本章小结}
+\label{sec:ch3_summary}
+
+本章给出了双电磁接收器驱动 Unitree G1 左臂的总体系统设计。系统以两个同步接收器位姿为
+输入，经本次安装标定和五自由度人体状态估计形成动作目标，再通过关节约束、碰撞保护、
+UDP 和 Arm SDK 安全桥驱动 G1 左臂。G1 官方 FSM 500 负责真机站立和平衡，本研究不把
+平衡控制作为论文贡献。
+
+第4章将集中说明如何从双接收器测量得到五自由度人体状态；第5章说明如何把这些状态转换为
+安全的 G1 真机命令；第6章分别评价人体估计、碰撞保护和真机执行性能。
+
+% ---------------------------------------------------------------------------
+% 合并到正式论文前的待办项（仅供作者，不进入最终正文）
+% 1. 绘制正式系统总体框图、真机通信图和运行状态图。
+% 2. 补充电磁跟踪、人体动作重定向和人机遥操作背景文献。
+% 3. 最终实验后填写 WEMT 型号、G1 硬件/固件和计算机配置。
+% 4. 将终端命令和完整现场部署清单移到附录。
+% 5. 与第4、5章统一人体状态、安全命令和编码器状态符号。

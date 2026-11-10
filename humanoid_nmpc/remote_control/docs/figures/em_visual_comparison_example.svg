@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1020" viewBox="0 0 1200 1020">
+  <style>
+    text { font-family: "Noto Sans CJK SC", "Noto Sans CJK TC", sans-serif; fill: #202124; }
+    .title { font-size: 25px; font-weight: 700; }
+    .warning { font-size: 17px; font-weight: 700; fill: #b3261e; }
+    .panel-title { font-size: 18px; font-weight: 700; }
+    .axis-label { font-size: 15px; }
+    .tick { font-size: 13px; fill: #5f6368; }
+    .grid { stroke: #dfe3e7; stroke-width: 1; }
+    .axis { stroke: #3c4043; stroke-width: 1.4; }
+    .vision { fill: none; stroke: #1a73e8; stroke-width: 3.2; stroke-linejoin: round; stroke-linecap: round; }
+    .em { fill: none; stroke: #d93025; stroke-width: 3.2; stroke-linejoin: round; stroke-linecap: round; }
+    .upper-error { fill: none; stroke: #7b1fa2; stroke-width: 2.8; }
+    .forearm-error { fill: none; stroke: #f57c00; stroke-width: 2.8; }
+    .elbow-error { fill: none; stroke: #188038; stroke-width: 2.8; }
+    .legend { font-size: 14px; }
+  </style>
+
+  <rect width="1200" height="1020" fill="#ffffff"/>
+  <text x="600" y="35" text-anchor="middle" class="title">EM 与双手机视觉参考的同步曲线示例</text>
+  <text x="600" y="60" text-anchor="middle" class="warning">合成示意数据——不是实际实验结果，不得作为论文测量值</text>
+
+  <!-- Shared legend -->
+  <line x1="760" y1="88" x2="805" y2="88" class="vision"/>
+  <text x="814" y="93" class="legend">双手机视觉参考</text>
+  <line x1="960" y1="88" x2="1005" y2="88" class="em"/>
+  <text x="1014" y="93" class="legend">EM估计</text>
+
+  <!-- Panel A -->
+  <text x="80" y="95" class="panel-title">A  大臂抬举角</text>
+  <rect x="80" y="105" width="1080" height="170" fill="#fafafa" stroke="#c7cdd1"/>
+  <line x1="80" y1="105" x2="1160" y2="105" class="grid"/>
+  <line x1="80" y1="190" x2="1160" y2="190" class="grid"/>
+  <line x1="80" y1="275" x2="1160" y2="275" class="grid"/>
+  <line x1="80" y1="105" x2="80" y2="275" class="axis"/>
+  <line x1="80" y1="275" x2="1160" y2="275" class="axis"/>
+  <text x="65" y="110" text-anchor="end" class="tick">90</text>
+  <text x="65" y="195" text-anchor="end" class="tick">45</text>
+  <text x="65" y="280" text-anchor="end" class="tick">0</text>
+  <text x="20" y="190" transform="rotate(-90 20 190)" text-anchor="middle" class="axis-label">角度 (°)</text>
+  <polyline class="vision" points="80,275 188,275 296,247 404,218 512,218 620,162 728,162 836,218 944,218 1052,275 1160,275"/>
+  <polyline class="em" points="80,266 188,266 296,241 404,209 512,209 620,149 728,151 836,205 944,209 1052,264 1160,266"/>
+
+  <!-- Panel B -->
+  <text x="80" y="315" class="panel-title">B  前臂方向角</text>
+  <rect x="80" y="325" width="1080" height="170" fill="#fafafa" stroke="#c7cdd1"/>
+  <line x1="80" y1="325" x2="1160" y2="325" class="grid"/>
+  <line x1="80" y1="410" x2="1160" y2="410" class="grid"/>
+  <line x1="80" y1="495" x2="1160" y2="495" class="grid"/>
+  <line x1="80" y1="325" x2="80" y2="495" class="axis"/>
+  <line x1="80" y1="495" x2="1160" y2="495" class="axis"/>
+  <text x="65" y="330" text-anchor="end" class="tick">90</text>
+  <text x="65" y="415" text-anchor="end" class="tick">45</text>
+  <text x="65" y="500" text-anchor="end" class="tick">0</text>
+  <text x="20" y="410" transform="rotate(-90 20 410)" text-anchor="middle" class="axis-label">角度 (°)</text>
+  <polyline class="vision" points="80,495 188,495 296,457 404,419 512,419 620,363 728,363 836,401 944,401 1052,476 1160,495"/>
+  <polyline class="em" points="80,480 188,480 296,442 404,401 512,403 620,340 728,344 836,382 944,384 1052,459 1160,480"/>
+
+  <!-- Panel C -->
+  <text x="80" y="535" class="panel-title">C  肘关节屈曲角</text>
+  <rect x="80" y="545" width="1080" height="170" fill="#fafafa" stroke="#c7cdd1"/>
+  <line x1="80" y1="545" x2="1160" y2="545" class="grid"/>
+  <line x1="80" y1="630" x2="1160" y2="630" class="grid"/>
+  <line x1="80" y1="715" x2="1160" y2="715" class="grid"/>
+  <line x1="80" y1="545" x2="80" y2="715" class="axis"/>
+  <line x1="80" y1="715" x2="1160" y2="715" class="axis"/>
+  <text x="65" y="550" text-anchor="end" class="tick">120</text>
+  <text x="65" y="635" text-anchor="end" class="tick">60</text>
+  <text x="65" y="720" text-anchor="end" class="tick">0</text>
+  <text x="20" y="630" transform="rotate(-90 20 630)" text-anchor="middle" class="axis-label">角度 (°)</text>
+  <polyline class="vision" points="80,588 188,588 296,588 404,588 512,588 620,630 728,630 836,673 944,673 1052,588 1160,588"/>
+  <polyline class="em" points="80,583 188,583 296,582 404,582 512,581 620,624 728,623 836,666 944,667 1052,582 1160,583"/>
+
+  <!-- Panel D -->
+  <text x="80" y="755" class="panel-title">D  三维方向/肘角绝对误差</text>
+  <rect x="80" y="765" width="1080" height="170" fill="#fafafa" stroke="#c7cdd1"/>
+  <line x1="80" y1="765" x2="1160" y2="765" class="grid"/>
+  <line x1="80" y1="833" x2="1160" y2="833" class="grid"/>
+  <line x1="80" y1="901" x2="1160" y2="901" class="grid"/>
+  <line x1="80" y1="935" x2="1160" y2="935" class="grid"/>
+  <line x1="80" y1="765" x2="80" y2="935" class="axis"/>
+  <line x1="80" y1="935" x2="1160" y2="935" class="axis"/>
+  <text x="65" y="770" text-anchor="end" class="tick">25</text>
+  <text x="65" y="838" text-anchor="end" class="tick">15</text>
+  <text x="65" y="906" text-anchor="end" class="tick">5</text>
+  <text x="65" y="940" text-anchor="end" class="tick">0</text>
+  <text x="20" y="850" transform="rotate(-90 20 850)" text-anchor="middle" class="axis-label">绝对误差 (°)</text>
+  <polyline class="upper-error" points="80,894 188,901 296,881 404,887 512,894 620,867 728,874 836,881 944,887 1052,894 1160,901"/>
+  <polyline class="forearm-error" points="80,874 188,881 296,854 404,860 512,867 620,840 728,847 836,854 944,867 1052,874 1160,881"/>
+  <polyline class="elbow-error" points="80,915 188,915 296,908 404,908 512,901 620,908 728,901 836,901 944,908 1052,908 1160,915"/>
+
+  <line x1="740" y1="785" x2="780" y2="785" class="upper-error"/>
+  <text x="790" y="790" class="legend">大臂三维方向误差</text>
+  <line x1="920" y1="785" x2="960" y2="785" class="forearm-error"/>
+  <text x="970" y="790" class="legend">前臂三维方向误差</text>
+  <line x1="740" y1="810" x2="780" y2="810" class="elbow-error"/>
+  <text x="790" y="815" class="legend">肘角绝对误差</text>
+
+  <!-- Shared x ticks -->
+  <g class="tick" text-anchor="middle">
+    <text x="80" y="958">0</text><text x="188" y="958">5</text>
+    <text x="296" y="958">10</text><text x="404" y="958">15</text>
+    <text x="512" y="958">20</text><text x="620" y="958">25</text>
+    <text x="728" y="958">30</text><text x="836" y="958">35</text>
+    <text x="944" y="958">40</text><text x="1052" y="958">45</text>
+    <text x="1160" y="958">50</text>
+  </g>
+  <text x="620" y="990" text-anchor="middle" class="axis-label">时间 (s)</text>
+</svg>

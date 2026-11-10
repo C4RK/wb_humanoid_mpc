@@ -1,0 +1,685 @@
+% 第5章 LaTeX 章节片段。
+% 建议主文档使用 XeLaTeX 或 LuaLaTeX 编译中文，并加载：
+% \usepackage{amsmath,amssymb,booktabs,tabularx,enumitem,hyperref}
+% 本文件不含 \documentclass、\begin{document} 或参考文献配置。
+
+\chapter{五自由度动作重定向与 G1 安全执行}
+\label{chap:g1_safe_retargeting_execution}
+
+\begin{quote}
+\itshape
+写作说明：本章依据当前双接收器重定向、G1 左臂碰撞过滤器和
+\texttt{g1\_arm\_sdk\_bridge.py} 的实现撰写。第4章回答“如何从人体测量得到五个广义
+坐标”，本章回答“如何把这五个量变成机器人能够安全执行的目标”。文中的工程阈值应在
+正式实验开始前冻结；实验结果和统计数据应放在后续实验与结果章节，而不应提前写入本章。
+\end{quote}
+
+\section{问题描述与系统边界}
+\label{sec:ch5_problem_scope}
+
+第~\ref{chap:adaptive_calibration_arm_estimation} 章输出人体左臂五自由度状态
+\begin{equation}
+  \hat{\boldsymbol q}_h=
+  \begin{bmatrix}
+    q_p&q_r&q_y&q_e&q_w
+  \end{bmatrix}^{\mathrm T},
+  \label{eq:ch5_human_state}
+\end{equation}
+其中五个分量依次表示肩部 pitch、肩部 roll、肩部 yaw、肘部伸展量和前臂旋前/旋后。
+这些变量采用与 Unitree G1 左臂相同的关节顺序和正方向，因此不需要再求解一次以末端位置
+为目标的机器人逆运动学。然而，“变量语义一致”并不意味着人体角度可以不经检查地直接
+发送给机器人。人体和 G1 在关节范围、臂长、初始姿态、惯量、碰撞几何和驱动能力方面均
+存在差异，测量链还可能出现丢帧、瞬时跳变和不可观测状态。因此，本章在人体估计与机器人
+执行之间加入目标调理、碰撞保护、接口隔离和真机闭环保护。
+
+系统的目标是由人体估计量构造安全机器人目标
+\begin{equation}
+  \boldsymbol q_c =
+  \mathcal S\!\left(\mathcal R(\hat{\boldsymbol q}_h),
+  \boldsymbol q_0,\boldsymbol q_a\right),
+  \label{eq:ch5_safe_mapping_overview}
+\end{equation}
+其中，$\mathcal R(\cdot)$ 表示人体到机器人关节语义的重定向，$\mathcal S(\cdot)$ 表示
+由关节限位、时间连续性、碰撞间隙和运行状态共同构成的安全映射，$\boldsymbol q_0$ 为接管
+时机器人姿态，$\boldsymbol q_a$ 为编码器测得的实际姿态。式~\eqref{eq:ch5_safe_mapping_overview}
+强调：最终命令不仅取决于人体动作，也取决于机器人当前状态和本轮实验允许的安全包络。
+
+\subsection{真机执行链}
+\label{subsec:ch5_real_execution_path}
+
+本研究的正式执行链如图~\ref{fig:ch5_system_paths} 所示。
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.90\linewidth}{\centering
+    人体五自由度目标 $\rightarrow$ 目标调理与碰撞保护
+    $\rightarrow$ \texttt{/arm\_joint\_target}
+    $\rightarrow$ 本机 UDP $\rightarrow$ Arm SDK 安全桥
+    $\rightarrow$ \texttt{rt/arm\_sdk} $\rightarrow$ G1 左臂}}
+  \caption{五自由度目标到 G1 左臂的真机执行链（待替换为正式系统框图）}
+  \label{fig:ch5_system_paths}
+\end{figure}
+
+G1 官方运动控制器的 FSM 500 负责维持站立和平衡，本项目仅通过
+\texttt{rt/arm\_sdk} 修改手臂参考。因此，本章研究的是手臂目标生成、接管和执行安全，
+而不是全身平衡控制。
+
+\subsection{分层安全思路}
+\label{subsec:ch5_layered_safety}
+
+本研究不依赖单个“安全开关”，而是采用逐层拒绝和逐层降级：
+\begin{enumerate}[label=\arabic*)]
+  \item 标定层拒绝低质量安装，并用 \texttt{dry\_run\_only} 禁止低质量标定进入真机；
+  \item 重定向层拒绝无效测量，限制关节角、角速度并保护躯干间隙；
+  \item 通信层把 ROS 2 目标与真机 DDS 权限隔离，真机桥默认只读；
+  \item 接管层检查目标和机器人状态，并缓慢建立控制权；
+  \item 在线执行层限制本轮关节包络、命令速度、跟踪误差、机身倾角和非目标关节速度；
+  \item 任一软件异常触发平滑释放；出现即时人身危险时仍由现场实体急停处理。
+\end{enumerate}
+
+软件保护不能替代吊架、现场人员和实体急停。本章所描述的是降低软件与通信故障风险的工程
+措施，而不是对所有机械、电气和环境风险的形式化安全证明。
+
+\section{人体动作到机器人关节目标的映射}
+\label{sec:ch5_human_robot_mapping}
+
+\subsection{关节语义的直接对应}
+\label{subsec:ch5_semantic_mapping}
+
+人体模型与 G1 左臂采用相同的五关节顺序，因此基础重定向写为
+\begin{equation}
+  \boldsymbol q_{r,5}=
+  \begin{bmatrix}
+    q_{r,p}&q_{r,r}&q_{r,y}&q_{r,e}&q_{r,w}
+  \end{bmatrix}^{\mathrm T}
+  =\hat{\boldsymbol q}_h.
+  \label{eq:ch5_direct_semantic_mapping}
+\end{equation}
+
+这里的“直接对应”是模型层面的语义对应，而非人体骨骼角与机器人编码器角之间的解剖学
+等价。第4章已经在标定阶段定义了 G1 风格的零位和正方向，本章只需保持相同定义。五个
+映射关系见表~\ref{tab:ch5_semantic_mapping}。
+
+\begin{table}[htbp]
+  \centering
+  \caption{人体五自由度与 G1 左臂关节的语义对应}
+  \label{tab:ch5_semantic_mapping}
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    人体估计量 & G1 目标关节 & 动作语义 & 本研究中的零位 \\
+    \midrule
+    $q_p$ & left shoulder pitch & 前举/后摆 & 大臂向下 \\
+    $q_r$ & left shoulder roll & 外展/内收 & 大臂位于身体侧面 \\
+    $q_y$ & left shoulder yaw & 肱骨轴向旋转 & 标定参考平面 \\
+    $q_e$ & left elbow & 从约 $90^\circ$ 弯曲向伸直的变化量 & 约 $90^\circ$ 弯肘 \\
+    $q_w$ & left wrist roll & 前臂旋前/旋后 & DOWN 参考姿态的中立转掌位置 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+采用关节语义映射而不是手部笛卡尔位置映射，有两个直接结果。首先，人体与机器人臂长不同
+不会导致逆运动学无解；其次，操作者的“抬臂、屈伸肘和转掌”意图能够分别落到相应机器人
+关节。代价是机器人手部的绝对位置不会与人体手部等比例重合，因此后续评价应比较肢段方向、
+归一化手位或任务是否完成，而不是直接比较两者世界坐标中的手位置。
+
+\subsection{机器人关节向量的构造}
+\label{subsec:ch5_full_joint_vector}
+
+重定向节点从完整 ROS 关节消息中更新左臂五个分量，UDP 发送器只抽取这五个目标。真机
+Arm SDK 桥在接管时从 \texttt{LowState} 记录腰部和双臂实际姿态；未启用关节保持接管值，
+只有选定的左臂关节逐步跟随人体目标。这样可避免默认模型姿态与真实站立姿态不同造成阶跃。
+
+\subsection{URDF 关节限位}
+\label{subsec:ch5_urdf_limits}
+
+对每个左臂关节 $i$，首先使用 G1 URDF 中的绝对限位
+\begin{equation}
+  q_i^{\mathrm{lim}}=
+  \operatorname{clip}(q_{r,i},q_i^{\min},q_i^{\max}).
+  \label{eq:ch5_urdf_clipping}
+\end{equation}
+当前模型的限位见表~\ref{tab:ch5_g1_joint_limits}。数值来自所用
+\texttt{g1\_23dof.urdf}，不应被解释为对其他 G1 固件、其他机械版本或任意负载条件均安全
+的实验范围。
+
+\begin{table}[htbp]
+  \centering
+  \caption{当前 G1 模型的左臂关节绝对限位}
+  \label{tab:ch5_g1_joint_limits}
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    关节 & 最小值 & 最大值 \\
+    \midrule
+    shoulder pitch & $-3.0892\,\mathrm{rad}$ & $2.6704\,\mathrm{rad}$ \\
+    shoulder roll  & $-1.5882\,\mathrm{rad}$ & $2.2515\,\mathrm{rad}$ \\
+    shoulder yaw   & $-2.6180\,\mathrm{rad}$ & $2.6180\,\mathrm{rad}$ \\
+    elbow          & $-1.0472\,\mathrm{rad}$ & $2.0944\,\mathrm{rad}$ \\
+    wrist roll     & $-1.9722\,\mathrm{rad}$ & $1.9722\,\mathrm{rad}$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+URDF 限位只是机械可行域的外边界，并不等同于本轮实验允许达到的范围。真机执行时还会将
+每个关节限制在以接管姿态为中心的更小包络中，第~\ref{subsec:ch5_takeover_envelope} 节将
+对此进行说明。
+
+\subsection{时间连续性调理}
+\label{subsec:ch5_temporal_conditioning}
+
+第4章得到的角度先经过一阶低通滤波和变化率限制。为完整描述机器人目标链，再将其写为
+\begin{align}
+  \boldsymbol q_f(k)
+  &=\boldsymbol q_f(k-1)+
+  \alpha_k\left(\boldsymbol q^{\mathrm{lim}}(k)-
+  \boldsymbol q_f(k-1)\right),
+  \label{eq:ch5_upstream_filter}\\
+  \alpha_k&=1-\exp(-\Delta t_k/\tau),
+  \qquad \tau=0.06\,\mathrm{s},
+  \label{eq:ch5_upstream_filter_alpha}
+\end{align}
+\begin{equation}
+  \boldsymbol q_t(k)=\boldsymbol q_t(k-1)+
+  \operatorname{clip}\!\left(
+  \boldsymbol q_f(k)-\boldsymbol q_t(k-1),
+  -\dot{\boldsymbol q}_{\max}\Delta t_k,
+  \dot{\boldsymbol q}_{\max}\Delta t_k
+  \right).
+  \label{eq:ch5_upstream_rate_limit}
+\end{equation}
+
+在线重定向节点的默认变化率上限为 $2.5\,\mathrm{rad/s}$。这个上限主要用于抑制估计跳变，
+不是正式真机试验的最终速度。真机桥会在其后再次施加更严格的每周期速度限制；当前正式
+测试采用 $5^\circ/\mathrm{s}$ 或 $8^\circ/\mathrm{s}$ 的渐进档位。两层限速的作用不同：
+上游限制异常估计的传播，下游限制实际执行命令的增长。
+
+\section{左臂--躯干碰撞保护}
+\label{sec:ch5_torso_collision}
+
+\subsection{为什么需要独立碰撞层}
+\label{subsec:ch5_collision_motivation}
+
+关节角处于 URDF 限位内，并不能保证手臂不会穿过胸部。例如，肩 roll 向身体内侧运动时，
+上臂、前臂或手部可能进入躯干几何体。因此，系统在目标进入真机接口之前设置一个轻量、
+确定性的左臂--躯干参考过滤器。
+
+该过滤器的设计目标不是求解任意环境中的全局无碰路径，而是以固定计算量处理本项目最直接
+的风险：左臂向胸前内收时与躯干相交。它使用预先整理的 URDF 关节变换和保守几何近似，
+不依赖外部全身控制器。
+
+\subsection{基于 URDF 的左臂正运动学}
+\label{subsec:ch5_g1_arm_forward_kinematics}
+
+设 G1 躯干坐标系为 $\{G\}$，五关节角为
+$\boldsymbol q=[q_p,q_r,q_y,q_e,q_w]^{\mathrm T}$。根据 URDF 中各关节的固定平移
+$\boldsymbol r_i$、固定安装旋转 $\boldsymbol R_i^0$ 和关节轴旋转
+$\boldsymbol R_{a_i}(q_i)$，相邻变换可统一写为
+\begin{equation}
+  {}^{i-1}\boldsymbol T_i(q_i)=
+  \begin{bmatrix}
+    \boldsymbol R_i^0\boldsymbol R_{a_i}(q_i)&\boldsymbol r_i\\
+    \boldsymbol 0^{\mathrm T}&1
+  \end{bmatrix}.
+  \label{eq:ch5_g1_link_transform}
+\end{equation}
+依次连乘可得到肩 yaw 点、肘点、腕点和手部末端点：
+\begin{equation}
+  {}^G\boldsymbol T_i=
+  {}^G\boldsymbol T_0
+  \prod_{j=1}^{i}{}^{j-1}\boldsymbol T_j(q_j).
+  \label{eq:ch5_g1_transform_chain}
+\end{equation}
+
+实现中的关节轴顺序为肩 pitch 绕 $y$ 轴、肩 roll 绕 $x$ 轴、肩 yaw 绕 $z$ 轴、肘部绕
+$y$ 轴、腕部绕 $x$ 轴，与第4章的人体模型语义一致。固定偏置和安装旋转直接读取并固化自
+当前 G1 URDF，而不是使用人体臂长近似。手部末端在腕部局部 $+x$ 方向延伸
+$0.235\,\mathrm m$，用于覆盖手掌碰撞范围。
+
+\subsection{躯干和手臂的保守几何近似}
+\label{subsec:ch5_collision_geometry}
+
+为降低每帧计算量，躯干网格用躯干坐标系中的轴对齐包围盒近似：
+\begin{equation}
+  \boldsymbol b^-=
+  \begin{bmatrix}-0.06665&-0.10772&-0.00995\end{bmatrix}^{\mathrm T}
+  \mathrm m,
+  \label{eq:ch5_torso_box_min}
+\end{equation}
+\begin{equation}
+  \boldsymbol b^+=
+  \begin{bmatrix}0.08364&0.10772&0.30037\end{bmatrix}^{\mathrm T}
+  \mathrm m.
+  \label{eq:ch5_torso_box_max}
+\end{equation}
+
+上臂远端、前臂和手部分别使用线段加半径构成的胶囊体近似，半径依次为
+$38\,\mathrm{mm}$、$36\,\mathrm{mm}$ 和 $45\,\mathrm{mm}$。肩部本来就与躯干相邻，
+如果从肩关节中心开始检查整段上臂，系统会把正常机械连接误判为碰撞。因此，上臂胶囊从
+肩 yaw 点到肘点连线的 35\% 位置开始，仅保护可能摆入胸部的远端部分。几何关系将在
+图~\ref{fig:ch5_collision_geometry} 中展示。
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.86\linewidth}{\centering
+    图示占位：G1 躯干轴对齐包围盒，上臂远端、前臂和手部胶囊体，原始危险目标，
+    shoulder roll 外向修正后的安全目标，以及 $25\,\mathrm{mm}$ 间隙。}}
+  \caption{左臂--躯干碰撞几何与外向修正（待替换为正式绘图）}
+  \label{fig:ch5_collision_geometry}
+\end{figure}
+
+对于任一点 $\boldsymbol x$，其到轴对齐包围盒的逐轴超出量定义为
+\begin{equation}
+  \delta_j(\boldsymbol x)=
+  \max\!\left(b_j^- -x_j,\,0,\,x_j-b_j^+\right).
+  \label{eq:ch5_point_box_delta}
+\end{equation}
+线段端点为 $\boldsymbol a$ 和 $\boldsymbol b$ 时，线段到包围盒的距离为
+\begin{equation}
+  d_{\mathrm{seg}}(\boldsymbol a,\boldsymbol b)=
+  \min_{0\le t\le1}
+  \left\|
+    \boldsymbol\delta\!\left(
+    \boldsymbol a+t(\boldsymbol b-\boldsymbol a)\right)
+  \right\|_2.
+  \label{eq:ch5_segment_box_distance}
+\end{equation}
+
+代码利用各坐标分量穿过包围盒边界的参数值划分区间。在每个区间内，式
+\eqref{eq:ch5_segment_box_distance} 的平方是凸二次函数，因此只需评价区间端点和驻点即可
+得到线段--包围盒的精确欧氏距离，不需要沿线段离散采样。对半径为 $r_l$ 的第 $l$ 个胶囊体，
+其表面间隙为
+\begin{equation}
+  d_l(\boldsymbol q)=d_{\mathrm{seg},l}(\boldsymbol q)-r_l,
+  \label{eq:ch5_capsule_clearance}
+\end{equation}
+整条左臂与躯干的最小间隙定义为
+\begin{equation}
+  d(\boldsymbol q)=\min_l d_l(\boldsymbol q).
+  \label{eq:ch5_arm_torso_clearance}
+\end{equation}
+
+当 $d<0$ 时，保守几何体已经相交；当 $0\le d<d_{\min}$ 时，虽然尚未相交，但没有达到
+要求的安全裕度。当前系统使用 $d_{\min}=25\,\mathrm{mm}$。
+
+\subsection{基于肩 roll 的确定性安全投影}
+\label{subsec:ch5_collision_projection}
+
+若输入目标 $\boldsymbol q_t$ 已满足 $d(\boldsymbol q_t)\ge d_{\min}$，过滤器不修改任何
+关节。若间隙不足，则保持 pitch、yaw、elbow 和 wrist 不变，仅增大左肩 roll，使手臂向
+身体外侧移动：
+\begin{equation}
+  q_r^{\mathrm{safe}}=
+  \min\left\{q_r+\Delta q\,\middle|\,
+  d(q_p,q_r+\Delta q,q_y,q_e,q_w)\ge d_{\min}\right\}.
+  \label{eq:ch5_roll_collision_projection}
+\end{equation}
+
+搜索首先以 $1^\circ$ 步长向外检查，最大允许修正为 $45^\circ$，同时不超过 shoulder roll
+的 URDF 上限。找到第一个安全区间后再进行 18 次二分细化，以避免命令呈现可见的一度台阶。
+该方法不是五维空间中的最短距离投影，而是依据左臂结构选取的单自由度、可预测保护策略。
+它牺牲一部分严格的动作保持，以换取较小计算量和易于解释的修正方向。
+
+如果在允许的 shoulder roll 修正范围内仍找不到安全目标，系统优先保持上一帧已经验证的
+安全关节向量。若连上一帧也不可用，则当前帧不发布。每次碰撞层修改目标后，时间滤波器的
+内部状态同步更新为实际发送的安全目标，避免下一帧再次“滤入危险区--投影到安全区”而在
+边界产生振荡。
+
+碰撞层输出包括原始间隙、安全间隙、限制连杆、是否介入、是否保持上一帧以及 shoulder
+roll 修正量。这些量被写入诊断日志，可在实验章节中计算最小间隙、介入比例和修正幅度。
+
+\section{真机通信与接口隔离}
+\label{sec:ch5_real_robot_interface}
+
+\subsection{ROS 2 到宿主机的 UDP 桥接}
+\label{subsec:ch5_udp_bridge}
+
+ROS 2 和 WEMT 节点运行在 Docker 环境中，而 Unitree Python SDK 运行在宿主机的独立环境
+中。系统使用本机回环 UDP 将两侧解耦。\texttt{arm\_target\_udp\_sender} 从完整关节消息
+中抽取左臂五个分量，并发送固定长度数据包
+\begin{equation}
+  \mathcal P=
+  \{\text{magic},\,n,\,t_s,\,q_p,\,q_r,\,q_y,\,q_e,\,q_w\},
+  \label{eq:ch5_udp_packet}
+\end{equation}
+其中 \texttt{magic} 为四字节标识 \texttt{G1A1}，$n$ 为 32 位循环序号，$t_s$ 为单调
+时钟纳秒时间戳，随后是五个双精度浮点关节角。发送前检查消息长度和所有角度的有限性。
+宿主机接收端只接受长度、标识和数值均有效的数据包，并以本地接收时间计算目标年龄。
+
+本机 UDP 的目的不是提供可靠消息队列，而是以较小依赖把最新目标送入宿主机安全进程。
+UDP 丢包不会被重传；安全性由目标新鲜度看门狗保证。只要没有新数据，桥接器就不会无限
+保持“目标仍然有效”的假设，而会停止跟随并进入释放流程。
+
+\subsection{默认只读与人工确认}
+\label{subsec:ch5_dry_run_confirmation}
+
+真机桥默认不创建 \texttt{rt/arm\_sdk} 命令发布器。未指定 \texttt{--execute} 时，程序
+只读取 \texttt{rt/lowstate} 和 UDP 目标，显示机器人实际角、源目标、映射后目标及初始
+差值，并给出 dry-run 通过或失败。只有显式指定执行模式和映射模式后，程序才允许进一步
+操作；真正创建命令发布器之前还要求操作者输入确认词。
+
+这种设计把“程序启动”与“机器人获得控制命令”分开。网络、DDS 和目标映射可以在不改变
+机器人状态的情况下先被检查，降低因命令行误操作而直接接管手臂的概率。人工确认不能替代
+自动保护，但为现场人员提供了最后一次检查起始姿态和周围空间的机会。
+
+\section{接管、对齐与在线跟随}
+\label{sec:ch5_takeover_tracking}
+
+\subsection{相对映射与绝对映射}
+\label{subsec:ch5_relative_absolute_mapping}
+
+设接管时机器人实际关节角为 $q_{0,i}$，第一帧稳定人体目标为 $q_{h,i}^0$，当前人体目标为
+$q_{h,i}(k)$。系统提供两种映射。相对起点模式为
+\begin{equation}
+  q_{a,i}(k)=q_{0,i}+q_{h,i}(k)-q_{h,i}^0.
+  \label{eq:ch5_relative_mapping}
+\end{equation}
+该模式保证第一帧不产生位置阶跃，适合单关节接管诊断；但同一个人体姿势在不同机器人起始
+姿态下会得到不同的最终角度，不能实现严格的绝对姿态复现。
+
+绝对映射模式为
+\begin{equation}
+  q_{a,i}(k)=q_{h,i}(k),
+  \label{eq:ch5_absolute_mapping}
+\end{equation}
+其中仅对本轮启用的关节应用该关系，未启用关节保持 $q_{0,i}$。绝对模式符合本研究“相同
+人体模型姿态对应相同 G1 关节目标”的最终目标，但在机器人初始姿态与人体目标不同时不能
+立即切换，必须先完成缓慢对齐。
+
+\subsection{控制权渐入和绝对对齐}
+\label{subsec:ch5_smooth_takeover_alignment}
+
+桥接器首先从 \texttt{LowState} 记录腰部、双臂和左腕等受 Arm SDK 权重影响的关节位置，
+并令初始命令等于测量姿态。获得人工确认后，Arm SDK 混合权重 $w$ 在 20 s 内由 0 平滑
+增加到 1：
+\begin{equation}
+  w(\rho)=\frac{1}{2}-\frac{1}{2}\cos(\pi\rho),\qquad
+  \rho=\operatorname{clip}\left(
+  \frac{t-t_0}{20\,\mathrm s},0,1\right).
+  \label{eq:ch5_takeover_weight}
+\end{equation}
+
+渐入期间目标位置保持在接管姿态，因而权重变化本身不应引起手臂运动。绝对模式在渐入末尾
+采集 2 s 的人体目标，以每个关节样本的中位数作为冻结目标。若任一启用关节偏离中位数超过
+$2^\circ$，则认为操作者没有保持静止并终止对齐。
+
+通过稳定性检查后，机器人以不超过 $2^\circ/\mathrm s$ 的速度移向冻结的绝对目标。对齐
+期间如果人体任一启用关节移动超过 $4^\circ$、目标超时或机器人状态异常，流程立即停止。
+只有实际关节误差不超过 $2^\circ$ 并连续保持 1 s，系统才宣布对齐完成并进入实时跟随。
+因此，绝对对齐解决的不是坐标标定问题，而是“机器人实际初姿态与已经标定的人体模型零位
+不同”造成的启动跃迁问题。
+
+\subsection{接管姿态中心的实验包络}
+\label{subsec:ch5_takeover_envelope}
+
+为了防止一次实验直接覆盖完整机械范围，对每个关节设定接管姿态中心的最大偏移 $E_i>0$。
+本轮有效区间是实验包络与 URDF 绝对限位的交集：
+\begin{align}
+  q_{i,\mathrm{low}}
+  &=\max(q_i^{\min},q_{0,i}-E_i),
+  \label{eq:ch5_envelope_low}\\
+  q_{i,\mathrm{high}}
+  &=\min(q_i^{\max},q_{0,i}+E_i),
+  \label{eq:ch5_envelope_high}
+\end{align}
+\begin{equation}
+  q_{b,i}=\operatorname{clip}
+  (q_{a,i},q_{i,\mathrm{low}},q_{i,\mathrm{high}}).
+  \label{eq:ch5_takeover_envelope_clip}
+\end{equation}
+
+包络是每轮真机试验的“增量安全范围”，而不是人体目标的绝对角度范围。例如，
+$E_e=60^\circ$ 表示肘关节相对接管姿态最多变化 $60^\circ$，并不表示肘关节只能位于
+$[-60^\circ,60^\circ]$。当前扩大范围试验对 pitch、roll 和 elbow 使用 $60^\circ$，
+对 yaw 和 wrist 分别使用 $25^\circ$ 和 $30^\circ$。这些数值属于渐进验证后的实验包络，
+不应被表述为 G1 的通用安全范围。
+
+\subsection{真机命令限速与跟踪滞后保护}
+\label{subsec:ch5_rate_lag_guard}
+
+真机桥以 $\Delta t=0.02\,\mathrm s$ 的周期运行。常规限速为
+\begin{equation}
+  q_{d,i}(k)=q_{d,i}(k-1)+
+  \operatorname{clip}\left(
+  q_{b,i}(k)-q_{d,i}(k-1),
+  -\dot q_{i,\max}\Delta t,
+  \dot q_{i,\max}\Delta t
+  \right),
+  \label{eq:ch5_bridge_rate_limit}
+\end{equation}
+其中 $q_d$ 为发送给 Arm SDK 的期望位置。正式测试从 $5^\circ/\mathrm s$ 开始，只有低速档
+通过后才使用 $8^\circ/\mathrm s$。
+
+仅限制命令速度仍不能保证机器人实际关节能够及时跟上。定义位置跟踪误差
+\begin{equation}
+  e_i(k)=q_{d,i}(k)-q_{\mathrm{act},i}(k).
+  \label{eq:ch5_tracking_error}
+\end{equation}
+当下一步命令会使 $|e_i|$ 继续增大且预测误差将越过软阈值 $e_{\mathrm{soft}}$ 时，
+\texttt{LAG-GUARD} 只允许使用剩余误差余量；到达软阈值后暂停向外推进，但始终允许命令
+向实际位置方向返回。软阈值由
+\begin{equation}
+  e_{\mathrm{soft}}=e_{\mathrm{hard}}-\Delta e
+  \label{eq:ch5_soft_tracking_threshold}
+\end{equation}
+给出。正式测试使用 $e_{\mathrm{hard}}=5^\circ$ 和 $\Delta e=1^\circ$，即误差达到约
+$4^\circ$ 时开始减缓外向命令，达到 $5^\circ$ 时硬停止。软保护让机器人有机会追上目标，
+硬阈值则负责终止已经超出允许跟踪误差的试验。
+
+\subsection{Arm SDK 位置命令与重力前馈}
+\label{subsec:ch5_arm_sdk_command}
+
+桥接器对受控关节发送位置、零速度、比例--微分增益和可选前馈力矩：
+\begin{equation}
+  q_i^{\mathrm{cmd}}=q_{d,i},\qquad
+  \dot q_i^{\mathrm{cmd}}=0,
+  \qquad K_p=60,\quad K_d=1.5.
+  \label{eq:ch5_arm_sdk_pd_command}
+\end{equation}
+
+肩 pitch 和肩 roll 可选用低幅值正弦重力前馈：
+\begin{align}
+  \tau_p^{\mathrm{ff}}
+  &=w\,\tau_{p,\max}\sin(q_p),
+  \label{eq:ch5_pitch_gravity_ff}\\
+  \tau_r^{\mathrm{ff}}
+  &=w\,\tau_{r,\max}\sin(q_r-q_{r,0}),
+  \label{eq:ch5_roll_gravity_ff}
+\end{align}
+其中 $q_{r,0}$ 是接管时测得的手臂下垂参考，$w$ 是 Arm SDK 权重。前馈随控制权一起渐入
+和释放，避免力矩阶跃。当前调试上限为每个方向 $3\,\mathrm{N\,m}$，默认值为 0，即默认
+关闭。该正弦模型是小范围实验中的保守补偿，不是由完整机器人动力学辨识得到的精确重力
+模型；论文中应将“开启/关闭前馈”的跟踪误差作为对照，而不能预先宣称其必然改善性能。
+
+\section{在线监测、故障处置与平滑释放}
+\label{sec:ch5_monitoring_release}
+
+\subsection{多源状态监测}
+\label{subsec:ch5_online_monitors}
+
+执行阶段同时监测人体目标流和机器人 \texttt{LowState}。表~\ref{tab:ch5_safety_thresholds}
+汇总当前主要保护量。表中“程序默认值”用于一般诊断，“正式实验值”是当前部署计划经过
+现场渐进测试后采用的设置；两者并非在每一项上都具有简单的保守大小关系。正式数据采集前
+应冻结后一列。
+
+\begin{table}[htbp]
+  \centering
+  \caption{真机桥主要在线保护阈值}
+  \label{tab:ch5_safety_thresholds}
+  \begin{tabularx}{\linewidth}{@{}Xlll@{}}
+    \toprule
+    检查项 & 程序默认值 & 当前正式实验值 & 触发后处理 \\
+    \midrule
+    UDP 目标超时 & $0.50\,\mathrm s$ & $0.75\,\mathrm s$ & 停止并释放 \\
+    LowState 超时 & $0.20\,\mathrm s$ & $0.20\,\mathrm s$ & 停止并释放 \\
+    机身 roll/pitch 最大值 & $10^\circ$ & $10^\circ$ & 停止并释放 \\
+    身体或保持关节速度 & $0.30\,\mathrm{rad/s}$ & $0.30\,\mathrm{rad/s}$ & 停止并释放 \\
+    启用手臂关节实测速度 & $60^\circ/\mathrm s$ & $60^\circ/\mathrm s$ & 停止并释放 \\
+    最大跟踪误差 & $15^\circ$ & $5^\circ$ & 停止并释放 \\
+    跟踪减速提前量 & $1^\circ$ & $1^\circ$ & 暂停外向增长 \\
+    实时命令速度 & $15^\circ/\mathrm s$ & 5 或 $8^\circ/\mathrm s$ & 每周期裁剪 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+目标和状态中的非有限数、超出 URDF 限位的源目标、无有效活动关节以及对齐阶段的人体移动也
+会使流程终止。身体速度检查覆盖双腿、腰部、右臂和本轮未启用的左臂关节，目的是在只测试
+某个关节时及时发现非目标运动。跟踪误差检查还覆盖由 Arm SDK 保持的腰部和双臂关节，从而
+避免只关注活动左臂而忽略接管权重对其他上肢关节的影响。
+
+\subsection{正常停止与异常停止的统一释放}
+\label{subsec:ch5_smooth_release}
+
+无论是运行时间结束、操作者按下 \texttt{Ctrl+C}，还是目标超时、状态超时、倾角、速度或
+跟踪误差触发异常，程序最终都会进入同一个释放段。释放开始时读取当前实际关节角并固定为
+释放姿态，随后用余弦平滑函数把 Arm SDK 权重从当前值降到 0：
+\begin{equation}
+  w_{\mathrm{rel}}(\rho)=w_0
+  \left[1-\left(\frac12-\frac12\cos(\pi\rho)\right)\right].
+  \label{eq:ch5_release_weight}
+\end{equation}
+
+释放时间至少为 3 s；从完整权重 1.0 释放时为 20 s。最后连续发送若干个零权重命令，以
+明确把控制权交还官方控制器。释放阶段固定当前实测位置而不是继续跟随人体，可避免操作者
+在停止过程中移动造成新的命令。
+
+平滑释放适用于机器人仍稳定、通信和进程仍可运行的情况。若发生快速不可控运动、即将倾倒、
+碰到人员或其他即时危险，现场人员不等待软件释放，而应直接使用实体急停。拔网线、关闭
+Docker 或直接终止电脑不能作为正常释放方法，因为这些操作无法保证 Arm SDK 权重按预期
+回到零。
+
+\section{算法流程与软件实现}
+\label{sec:ch5_algorithms_implementation}
+
+\subsection{安全目标生成}
+\label{subsec:ch5_safe_target_algorithm}
+
+一次从人体状态到安全机器人参考的过程可归纳为算法 5-1。
+
+\begin{quote}
+\textbf{算法 5-1：五自由度 G1 左臂安全目标生成}
+
+\textbf{输入：}人体五自由度估计 $\hat{\boldsymbol q}_h$、上一帧滤波状态、上一帧安全
+目标、G1 URDF 限位和碰撞模型。
+
+\textbf{输出：}安全的五关节机器人目标 $\boldsymbol q_c$，或拒绝当前帧。
+
+\begin{enumerate}[label=\arabic*.]
+  \item 检查当前标定是否具有真机发布资格；
+  \item 按 pitch、roll、yaw、elbow、wrist 的相同语义构造五关节目标；
+  \item 对五关节执行 URDF 绝对限位；
+  \item 执行一阶低通滤波和上游变化率限制；
+  \item 根据 G1 正运动学计算上臂、前臂和手部胶囊体；
+  \item 计算各胶囊体到躯干包围盒的表面间隙；
+  \item 若间隙不足，增加 shoulder roll 并搜索满足 25 mm 裕度的最小外向修正；
+  \item 若搜索失败，保持上一帧安全目标；上一帧也无效时拒绝当前帧；
+  \item 将安全五关节目标写入 ROS 关节消息；
+  \item 发布到真机目标话题，并记录修正前后目标与碰撞诊断量。
+\end{enumerate}
+\end{quote}
+
+\subsection{真机安全桥状态流程}
+\label{subsec:ch5_real_bridge_algorithm}
+
+真机侧可归纳为算法 5-2。
+
+\begin{quote}
+\textbf{算法 5-2：G1 Arm SDK 安全接管与跟随}
+
+\textbf{输入：}UDP 左臂目标、G1 \texttt{LowState}、活动关节集合、每关节实验包络和安全
+阈值。
+
+\textbf{输出：}\texttt{rt/arm\_sdk} 命令，或平滑释放控制权。
+
+\begin{enumerate}[label=\arabic*.]
+  \item 等待新鲜 UDP 目标和 \texttt{LowState}，检查有限性、URDF 限位、机身倾角和静止状态；
+  \item 在 dry-run 中显示源目标、应用目标、实际角和初始差值，不创建命令发布器；
+  \item 执行模式下要求显式选择相对或绝对映射，并等待人工确认；
+  \item 记录腰部和双臂接管姿态，以平滑函数在 20 s 内提高 Arm SDK 权重；
+  \item 绝对模式下采集稳定人体目标，并以低速完成机器人绝对对齐；
+  \item 将目标限制在 URDF 与本轮接管包络的交集内；
+  \item 施加真机命令限速和跟踪滞后软保护；
+  \item 发布位置、PD 参数、可选重力前馈和控制权重；
+  \item 每周期检查目标年龄、状态年龄、倾角、身体速度、手臂速度和跟踪误差；
+  \item 正常结束或任一检查失败时，固定当前实测姿态并将权重平滑降为零；
+  \item 保存全频率 CSV，用于后续跟踪误差和安全指标计算。
+\end{enumerate}
+\end{quote}
+
+实现中，\texttt{dual\_retargeting\_node} 完成五关节语义映射、限位、时间滤波和碰撞保护；
+\texttt{g1\_arm\_collision.py} 提供无 ROS 依赖的正运动学与距离计算；
+\texttt{arm\_target\_udp\_sender} 完成 Docker 到宿主机的数据转发；
+\texttt{g1\_arm\_sdk\_bridge.py} 完成状态读取、对齐、真机限速、监测、Arm SDK 命令和释放。
+碰撞距离、限速、映射和滞后保护均有独立单元测试，从而把可验证的纯数学逻辑与 ROS/DDS
+通信代码分离。
+
+\section{诊断数据与可评价指标}
+\label{sec:ch5_diagnostics_metrics}
+
+重定向节点在退出时保存全频率 NPZ，至少包括：
+\begin{itemize}
+  \item 碰撞修正前和修正后的五关节角；
+  \item 原始间隙、安全间隙和限制连杆；
+  \item 碰撞层是否介入、是否保持上一安全帧及 roll 修正量；
+  \item 第4章得到的肢段方向、可观测度和位置模型误差。
+\end{itemize}
+
+真机桥在释放后保存全频率 CSV，至少包括：
+\begin{itemize}
+  \item UDP 序号、发送时间戳、目标年龄和本机传输时间；
+  \item 源目标、映射目标和最终命令；
+  \item 五个左臂实际编码器角与速度；
+  \item 腰部、右臂和下肢的角度与速度；
+  \item IMU roll、pitch 和 yaw；
+  \item pitch/roll 重力前馈力矩。
+\end{itemize}
+
+由此可分别计算目标生成层和执行层指标。碰撞保护评价应报告
+$\min d_{\mathrm{raw}}$、$\min d_{\mathrm{safe}}$、介入帧比例、保持帧比例和修正角分布；
+真机跟踪评价应对每个关节报告 RMSE、P95 和最大误差，并统计 \texttt{LAG-GUARD}、裁剪、
+停止与超时次数。UDP 时间只覆盖 ROS 发送进程到宿主机桥接循环，不能单独代表从 WEMT
+采样到机器人机械响应的端到端延迟。
+
+\section{方法限制与适用范围}
+\label{sec:ch5_limitations}
+
+本章方法存在以下边界：
+\begin{enumerate}[label=\arabic*)]
+  \item 直接关节语义映射保留动作含义，但不保证人体手与机器人手具有相同笛卡尔轨迹；
+  \item 碰撞模型只覆盖左臂与躯干，不覆盖左手与环境、左右臂互碰、手臂与头部或腿部碰撞；
+  \item 躯干包围盒和手臂胶囊体是保守近似，25 mm 是本项目工程裕度，不是认证安全距离；
+  \item 仅通过增大 shoulder roll 修正碰撞，无法代表五维关节空间中的全局最优安全姿态；
+  \item 真机平衡由官方 FSM 500 提供，本章不提出或评价全身平衡控制器；
+  \item 正弦重力前馈是可选工程补偿，不是完整动力学控制器；
+  \item 软件超时和平滑释放依赖计算机和 DDS 仍能运行，不能取代现场实体急停；
+  \item 所有速度、误差和包络阈值均针对当前机器、当前吊架条件和慢速实验逐步验证，不能
+        直接推广到高速动作、负载操作或其他机器人。
+\end{enumerate}
+
+这些限制不否定本章的作用。该层的核心贡献是把第4章可能包含噪声和不可执行区域的人体
+估计，转换为一个具有明确边界、可诊断的机器人参考，并使每次
+保护介入都能在日志中被追溯。
+
+\section{本章小结}
+\label{sec:ch5_summary}
+
+本章建立了从人体五自由度估计到 Unitree G1 左臂安全执行的完整链路。由于第4章已经把人体
+动作表示为与 G1 一致的关节语义，基础重定向可采用直接关节映射；随后通过 URDF 绝对限位、
+低通滤波和变化率限制获得连续目标。为处理关节限位不能覆盖的躯干碰撞，系统依据 G1 URDF
+构造左臂正运动学，用胶囊体和躯干包围盒计算精确线段间隙，并通过最小 shoulder roll 外向
+修正或保持上一安全帧维持 25 mm 工程裕度。
+
+真机由官方 FSM 500 保持平衡，本项目通过本机 UDP 和 Arm SDK 安全桥控制左臂。真机桥
+依次执行只读检查、人工确认、20 s 控制权渐入、稳定目标提取、绝对对齐、
+接管姿态包络裁剪、低速跟随和滞后保护，并在正常或异常结束时平滑释放控制权。
+
+下一章将据此设计人体估计、碰撞保护和 G1 真机跟踪实验，明确区分标定
+一致性、独立人体真值、机器人目标生成质量与编码器跟踪性能。
+
+% ---------------------------------------------------------------------------
+% 合并到正式论文前的待办项（仅供作者，不进入最终正文）
+% 1. 补充动作重定向、遥操作共享控制、机器人安全限幅、胶囊体碰撞检测和控制权平滑切换文献。
+% 2. 绘制“人体估计--安全重定向--UDP/Arm SDK--G1”的正式系统框图。
+% 3. 绘制 G1 躯干包围盒、三段手臂胶囊体和 shoulder roll 外向修正示意图。
+% 4. 用当前 URDF 再次核对关节索引、固定偏置、碰撞半径和关节限位。
+% 5. 在正式采集前冻结表 5-3 的实验阈值，并把程序默认值与论文实验值明确分开。
+% 6. 碰撞层开启/关闭对照只做离线轨迹回放，真机始终开启碰撞保护。
+% 7. 将前馈开启/关闭的结果放在实验章，本章只保留模型和预设幅值。
+% 8. 按学校模板统一算法、公式、图和表的编号与交叉引用。

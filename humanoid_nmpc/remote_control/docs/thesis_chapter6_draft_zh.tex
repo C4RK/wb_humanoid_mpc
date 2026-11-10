@@ -1,0 +1,644 @@
+% 第6章 LaTeX 章节片段。
+% 建议主文档使用 XeLaTeX 或 LuaLaTeX 编译中文，并加载：
+% \usepackage{amsmath,amssymb,booktabs,tabularx,enumitem,hyperref}
+
+\chapter{实验设计与评价方法}
+\label{chap:experimental_design}
+
+\begin{quote}
+\itshape
+写作说明：本章给出正式论文实验的预设方案，重点说明研究问题、独立视觉参考、动作矩阵、
+评价指标、统计单位和无效数据规则。已有的 G1 调试记录用于选择动作范围、速度和安全阈值，
+应作为预实验单独报告，不能与采用冻结参数采集的正式数据合并。尚未实际完成的实验不得
+在本章或下一章中写成已经完成。
+\end{quote}
+
+\section{评价目标与研究问题}
+\label{sec:ch6_research_questions}
+
+第~\ref{chap:adaptive_calibration_arm_estimation} 章和第~\ref{chap:g1_safe_retargeting_execution}
+章分别提出了人体手臂状态估计方法和机器人安全执行链。本章不把整个系统压缩为一个“总
+误差”，而是沿信息流分别评价：
+\begin{enumerate}[label=\arabic*)]
+  \item 电磁测量和当次安装标定是否稳定；
+  \item 五自由度人体状态是否接近独立视觉参考；
+  \item 重新佩戴后重新标定能否恢复相近的动作估计；
+  \item 左臂--躯干碰撞层是否维持预设间隙；
+  \item G1 真机编码器是否能稳定跟踪安全桥输出的命令，并在异常时安全释放控制权。
+\end{enumerate}
+
+据此提出表~\ref{tab:ch6_research_questions} 所列研究问题。这里使用“研究问题”而非在数据
+采集后再补写假设，目的是在正式实验前固定比较对象和评价指标。
+
+\begin{table}[htbp]
+  \centering
+  \caption{论文实验的分层研究问题}
+  \label{tab:ch6_research_questions}
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    编号 & 研究问题 & 主要数据 & 主要指标 \\
+    \midrule
+    RQ1 & 重新佩戴后的标定是否稳定且可重复？
+        & reference NPZ、标定 YAML & 静态 RMS、参考残差、重复差异、合格率 \\
+    RQ2 & 人体大臂方向、前臂方向和肘角估计是否准确？
+        & 视觉视频、retargeting NPZ & 方向/肘角误差的 RMSE、P95、最大值 \\
+    RQ3 & 仿射位置模型和安装级修正是否优于简化方案？
+        & 同一原始轨迹的离线回放 & 配对误差差、失败帧比例、模型一致性 \\
+    RQ4 & 碰撞过滤器是否阻止左臂进入躯干？
+        & 开启/关闭保护的同轨迹离线回放 & 最小间隙、穿透帧、介入率、修正量 \\
+    RQ5 & G1 真机能否稳定执行目标并在异常时安全停止？
+        & 真机 CSV、LowState、视频 & 跟踪误差、目标年龄、超时与释放事件 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+上述问题对应三类不能互相替代的证据：视觉参考与 EM 输出的差异回答“人体动作是否估计
+正确”；安全层输入与输出的差异回答“机器人目标如何被修正”；安全命令与 G1 编码器的差异
+回答“机器人是否执行了命令”。例如，真机关节跟踪误差很小只能证明执行层工作正常，不能
+证明人体角度估计准确；标定参考姿势残差较小也不能替代未参与拟合的视觉评价。
+
+\section{实验系统与测量设备}
+\label{sec:ch6_experimental_setup}
+
+\subsection{系统组成}
+\label{subsec:ch6_system_components}
+
+实验系统由双接收器电磁跟踪、独立视觉参考和 Unitree G1 真机三部分组成，
+如图~\ref{fig:ch6_evaluation_system} 所示。图中应同时标出三条比较关系：EM 肢段方向与
+视觉肢段方向、碰撞修正前目标与安全目标、真机安全命令与编码器角度。
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.90\linewidth}{\centering
+    人体动作 $\rightarrow$ 双 WEMT 接收器 $\rightarrow$ 标定与五自由度估计
+    $\rightarrow$ 安全重定向 $\rightarrow$ UDP 安全桥 $\rightarrow$ Arm SDK/G1\\[0.4em]
+    人体动作 $\rightarrow$ 两台固定手机与刚性 ArUco 标记
+    $\rightarrow$ 独立视觉参考\\[0.4em]
+    比较：视觉--EM；保护前--保护后；命令--编码器。}}
+  \caption{实验系统与三层评价关系（待替换为正式绘图）}
+  \label{fig:ch6_evaluation_system}
+\end{figure}
+
+\begin{table}[htbp]
+  \centering
+  \caption{实验设备、配置与用途}
+  \label{tab:ch6_equipment}
+  \begin{tabularx}{\linewidth}{@{}lXX@{}}
+    \toprule
+    设备/软件 & 当前配置 & 用途 \\
+    \midrule
+    电磁位姿系统 & 胸部发射器；大臂、前臂各一只接收器；约 50 Hz & 在线人体手臂估计 \\
+    手机 A、B & 后置主摄、$1920\times1080$、60 fps、固定支架 & 双视角独立视觉参考 \\
+    ChArUco 板 & $8\times6$ 方格；方格 40 mm；内部标记 30 mm & 内参和双相机外参 \\
+    肢段 ArUco 板 & DICT\_4X4\_50；ID 10/20；黑框边长 60 mm & 肢段姿态参考 \\
+    Unitree G1 & 23 自由度模型；真机使用 FSM 500 & 慢速左臂跟随验证 \\
+    ROS 2 与 Unitree SDK & Docker 中运行 ROS 2；宿主机运行 SDK & 采集和真机桥接 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+手机型号、镜头、实际帧率、机器人固件版本、WEMT 设备编号及计算机硬件应在最终实验完成后
+填入论文附表，不能用“unknown”代替可获取的信息。
+
+\subsection{现场布置}
+\label{subsec:ch6_physical_layout}
+
+电磁发射器固定在操作者胸部，大臂接收器位于左肘上方约 8--12 cm，前臂接收器位于腕横纹
+上方约 5--8 cm。两块视觉标记分别固定在对应肢段外侧，不跨越关节。手机 A 位于正前方，
+手机 B 位于左前侧或左侧，两光轴夹角约 $60^\circ$--$90^\circ$，与左肩距离约
+1.5--2.5 m。双相机外参标定以后，任一支架发生移动都使该次外参失效。
+
+真机实验使用吊架防跌，由一人操作计算机、一人负责手柄和实体急停。实时跟随时 G1 双脚
+着地，吊架只保留防跌余量；机器人周围不得有人、桌椅或线缆。
+
+\section{实验单位、样本设计与数据分层}
+\label{sec:ch6_sampling_design}
+
+\subsection{层级化实验单位}
+\label{subsec:ch6_hierarchical_units}
+
+连续数据具有明显的时间相关性，因此不能把 50 Hz 采集的每一帧视为独立样本。本研究采用
+以下层级：
+\begin{enumerate}[label=\arabic*)]
+  \item 参与者：独立人体个体；
+  \item 安装：设备被完全拆下、重新佩戴并重新标定的一次会话；
+  \item 试次：安装内一次完整动作往返或一次静态姿势重建；
+  \item 保持段/动态段：试次中用于计算特定指标的时间窗口；
+  \item 帧：用于在窗口内形成误差分布，但不直接增加参与者或安装样本量。
+\end{enumerate}
+
+主要可行性方案至少包含 1 名主要参与者和 10 次独立重新佩戴。每次安装都重新完成标定和
+独立评价动作；每个静态终点至少离开后重新构建 3 次。若只包含一名参与者，论文结论应限定
+为工程可行性和跨安装重复性，不能外推为一般人群性能。若增加其他参与者，应事先确认伦理
+审批与知情同意要求。
+
+\subsection{预实验与正式实验分离}
+\label{subsec:ch6_pilot_formal_separation}
+
+开发阶段已经保存的实机接管、范围递增和通信超时记录用于验证日志和停止流程、选择正式
+实验的速度与包络，以及发现 roll 负载和目标流停顿等问题。由于这些数据参与了参数选择，
+不能再作为采用同一阈值的独立确认数据。论文应将其标记为 pilot/commissioning data，
+单独展示或放入附录。
+
+正式实验开始的判据是：视觉后处理可完成、动作脚本冻结、安全阈值冻结、代码版本和配置
+文件已归档。此后若修改算法或阈值，应开始新的数据批次，而不能与旧批次无说明合并。
+
+\subsection{会话目录与元数据}
+\label{subsec:ch6_metadata}
+
+每次安装建立独立目录，并至少保存参与者匿名编号、安装编号、当地/UTC 时间、Git 提交、
+关键文件校验值、标定 YAML、reference NPZ、retargeting NPZ、原始视频、相机参数、动作
+时间表、真机 CSV、LowState 记录、终端输出和异常说明。失败试验同样保留，并记录失败发生在哪
+一层。只保留“最好看”的成功试验会高估系统性能。
+
+\section{独立视觉参考系统}
+\label{sec:ch6_visual_reference}
+
+\subsection{相机内参与双相机外参}
+\label{subsec:ch6_camera_calibration}
+
+每台手机使用正式实验相同的分辨率、主摄镜头、焦距和防抖设置完成 ChArUco 内参标定。
+设空间点为 $\boldsymbol X$，相机投影模型为
+\begin{equation}
+  s\begin{bmatrix}u&v&1\end{bmatrix}^{\mathrm T}
+  =\boldsymbol K
+  \begin{bmatrix}\boldsymbol R&\boldsymbol t\end{bmatrix}
+  \begin{bmatrix}\boldsymbol X&1\end{bmatrix}^{\mathrm T},
+  \label{eq:ch6_camera_projection}
+\end{equation}
+其中 $\boldsymbol K$ 为相机内参，镜头畸变在投影前由 OpenCV 模型校正。第 $j$ 个角点的
+重投影误差为
+\begin{equation}
+  e_{\mathrm{reproj},j}
+  =\left\|\boldsymbol z_j-\hat{\boldsymbol z}_j\right\|_2.
+  \label{eq:ch6_reprojection_error}
+\end{equation}
+
+每台手机至少使用 25--40 张覆盖画面中心、边缘、不同距离和不同倾角的清晰图像。平均重投影
+误差的工程目标为小于 1 pixel，并优先争取小于 0.5 pixel。最终论文同时报告均值、中位数、
+P95 和最大重投影误差，不能只给标定软件返回的一个总值。
+
+双相机外参使用 15--20 对两台相机共同看到的 ChArUco 静止姿势求解。设相机 A 到相机 B 的
+固定变换为
+\begin{equation}
+  {}^{B}\boldsymbol T_A=
+  \begin{bmatrix}
+    {}^{B}\boldsymbol R_A&{}^{B}\boldsymbol t_A\\
+    \boldsymbol 0^{\mathrm T}&1
+  \end{bmatrix}.
+  \label{eq:ch6_stereo_transform}
+\end{equation}
+外参完成后，用固定小标记分别由两台手机估计姿态并变换到共同坐标系。两台相机所得标记
+方向差作为视觉系统自身一致性指标，工程目标优先控制在 $2^\circ$--$3^\circ$。视觉系统
+经过上述标定后仍被称为“视觉参考”，而不是无误差的绝对真值。
+
+\subsection{视觉标记到人体肢段的对齐}
+\label{subsec:ch6_marker_segment_alignment}
+
+平面标记的坐标轴通常不与肱骨和前臂纵轴完全平行。每次重新安装标记后，利用 DOWN、
+FORWARD 和 SIDEWAYS 等参考姿势联合估计：双相机共同坐标系到人体/EM标准坐标系的旋转、
+两个标记局部坐标系中的肢段纵轴，以及评价轴向旋转时的标记--肢段固定旋转。这些对齐数据
+只用于视觉系统标定，不能同时作为独立精度评价样本。
+
+视觉大臂和前臂方向分别记为 $ {}^{B}\boldsymbol u_v$ 和 $ {}^{B}\boldsymbol f_v$。视觉
+几何肘部伸展量按与第4章相同的约定计算：
+\begin{equation}
+  q_{e,v}=\arcsin\left[
+  \operatorname{clip}\left(
+  {}^{B}\boldsymbol u_v^{\mathrm T}
+  {}^{B}\boldsymbol f_v,-1,1\right)
+  \right].
+  \label{eq:ch6_visual_elbow_angle}
+\end{equation}
+
+\subsection{时间同步}
+\label{subsec:ch6_time_synchronization}
+
+两台手机没有硬件同步。正式录像开始和结束时使用两台画面共同可见的 LED 亮灭事件，得到
+两段视频的对应时刻。随后执行一次约 $20^\circ$ 的明显肘部屈伸，使视觉肘角和 EM 肘角
+都出现易于识别的动态事件，用于视觉时间线与 ROS 日志对齐。
+
+若起点和终点均有同步事件，则用仿射时间模型校正长录像的偏移和时钟漂移：
+\begin{equation}
+  t_{\mathrm{EM}}=a\,t_{\mathrm{video}}+b.
+  \label{eq:ch6_affine_time_alignment}
+\end{equation}
+参数 $a,b$ 由开始和结束事件估计，并用中间肘部动作做一致性检查。视觉方向和肘角最终
+插值到 EM 时间戳。插值只用于时间对齐，不填补长时间标记遮挡；超过预设最大间隔的区域仍
+标记为无效。
+
+\section{人体姿态估计准确性与重新佩戴实验}
+\label{sec:ch6_human_estimation_experiment}
+
+\subsection{每次安装的标准流程}
+\label{subsec:ch6_installation_protocol}
+
+每次安装按以下固定顺序执行：
+\begin{enumerate}[label=\arabic*)]
+  \item 完全拆下并重新安装发射器、两只接收器和两块视觉标记；
+  \item 完成 EM 静态质量、接收器身份、前臂旋转轴和七参考姿势标定；
+  \item 保存标定 YAML 和 reference NPZ，检查是否具有真机资格；
+  \item 录制独立视觉评价视频，同时以 dry-run 模式保存 retargeting NPZ；
+  \item 完成动作分段和数据质量检查；
+  \item 只有独立评价数据有效时，才选择其中的轨迹进行离线碰撞回放或真机实验。
+\end{enumerate}
+
+标定和独立评价必须分开录制。设备或标记一旦移动，本次安装立即结束，不能仅通过修改对齐
+参数继续使用原标定。
+
+\subsection{标准动作矩阵}
+\label{subsec:ch6_human_action_matrix}
+
+所有动作缓慢完成：移动阶段为 3--5 s，终点保持 5 s。除专门的躯干测试外，躯干保持不动；
+除旋前/旋后测试外，手掌保持中立。动作矩阵见表~\ref{tab:ch6_human_actions}。
+
+\begin{table}[htbp]
+  \centering
+  \caption{人体估计与重新佩戴评价动作}
+  \label{tab:ch6_human_actions}
+  \begin{tabularx}{\linewidth}{@{}lXlX@{}}
+    \toprule
+    编号 & 动作 & 重复 & 主要目的 \\
+    \midrule
+    H0 & DOWN 静止 & 1$\times$5 s & 零位、漂移和静态噪声 \\
+    H1 & 直臂下垂 & 3 & 肘角和终点重复性 \\
+    H2 & 直臂前举约 $30^\circ,60^\circ,90^\circ$ & 各3 & 矢状面大臂方向 \\
+    H3 & 直臂侧举约 $30^\circ,60^\circ,90^\circ$ & 各3 & 额状面大臂方向 \\
+    H4 & 前左斜向举到肩高 & 3 & 三维组合方向 \\
+    H5 & 大臂下垂、肘部屈伸 & 3往返 & 肘角和无关关节串扰 \\
+    H6 & 肘弯 $60^\circ$--$90^\circ$、双向转掌 & 3往返 & wrist 与 yaw 分离 \\
+    H7 & 弯肘前举到 FORWARD & 3往返 & 弯肘状态方向和 yaw \\
+    H8 & 手臂相对躯干固定，躯干左右转约 $15^\circ$ & 2 & 躯干相对不变性 \\
+    H9 & 胸前接近躯干并返回 & 3 & 碰撞层输入轨迹 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+表中的 $30^\circ,60^\circ,90^\circ$ 只是覆盖工作空间的动作提示，实际角度由视觉系统
+测量，不以参与者凭感觉摆到精确角度作为真值。直臂状态不把 shoulder yaw 和 wrist roll
+作为主要精度指标。
+
+\subsection{方向和肘角误差}
+\label{subsec:ch6_direction_elbow_errors}
+
+设 EM 估计方向为 $\hat{\boldsymbol u},\hat{\boldsymbol f}$，同步视觉参考方向为
+$\boldsymbol u_v,\boldsymbol f_v$，方向误差为
+\begin{align}
+  e_u&=\arccos\left[
+  \operatorname{clip}\left(
+  \hat{\boldsymbol u}^{\mathrm T}\boldsymbol u_v,-1,1\right)\right],
+  \label{eq:ch6_upper_direction_error}\\
+  e_f&=\arccos\left[
+  \operatorname{clip}\left(
+  \hat{\boldsymbol f}^{\mathrm T}\boldsymbol f_v,-1,1\right)\right].
+  \label{eq:ch6_forearm_direction_error}
+\end{align}
+肘角误差为
+\begin{equation}
+  e_e=\left|
+  \operatorname{wrap}_{[-\pi,\pi)}
+  \left(q_e-q_{e,v}\right)\right|.
+  \label{eq:ch6_elbow_error}
+\end{equation}
+
+每个保持段先计算该段的 RMSE、中位数、P95 和最大误差，再以试次和安装为单位汇总。动态
+动作另外报告随姿态范围变化的误差曲线。若视觉参考自身双相机方向差较大，应同时展示该不
+确定度，不能把视觉误差全部归因于 EM 方法。
+
+\subsection{静态稳定性和终点重复性}
+\label{subsec:ch6_static_repeatability}
+
+对长度为 $N$ 的某关节保持段，静态均值和标准差为
+\begin{equation}
+  \bar q_i=\frac{1}{N}\sum_{k=1}^{N}q_i(k),\qquad
+  \sigma_{q_i}=
+  \sqrt{\frac{1}{N-1}
+  \sum_{k=1}^{N}\left(q_i(k)-\bar q_i\right)^2}.
+  \label{eq:ch6_static_joint_statistics}
+\end{equation}
+对周期角先展开到同一连续分支后再计算，避免 $-\pi/\pi$ 边界人为放大方差。静态方向使用
+球面平均方向及测地角离散度，不直接对三个笛卡尔分量分别计算标准差。
+
+终点重复性由同一安装内三次重新构建姿势的代表值差异评价；跨安装重复性则比较 10 次独立
+安装中的同一动作终点。前者主要反映动作重建和短期噪声，后者还包含重新佩戴与重新标定的
+变化，两者应分开报告。
+
+\section{模型对照与消融实验}
+\label{sec:ch6_model_ablations}
+
+\subsection{上臂方向模型}
+\label{subsec:ch6_upper_model_ablation}
+
+为判断仿射椭球是否真正改善独立动作，而非仅更好地拟合标定姿势，使用同一组原始接收器
+轨迹离线比较大臂接收器姿态法、球面位置法和仿射位置法。所有方法使用相同训练参考姿势和
+完全相同的独立评价帧。主要指标为视觉大臂方向误差、超出模型一致性门槛的帧比例和跨安装
+离散程度。若某方法训练残差较低但独立动作误差没有改善，应如实报告过拟合或覆盖不足。
+
+\subsection{安装级肘角修正}
+\label{subsec:ch6_elbow_ablation}
+
+在相同几何方向估计上比较
+\begin{equation}
+  q_{e,\mathrm{uncal}}=q_{e,g}
+  \label{eq:ch6_uncalibrated_elbow}
+\end{equation}
+与
+\begin{equation}
+  q_{e,\mathrm{cal}}=
+  \operatorname{clip}(s_e q_{e,g}+b_e,0,\pi/2).
+  \label{eq:ch6_calibrated_elbow}
+\end{equation}
+比较只使用未参与 $s_e,b_e$ 拟合的独立屈伸动作。报告肘角 RMSE、端点偏差和不同安装中
+增益/偏置的分布。不能用参与拟合的参考点同时证明修正后的泛化精度。
+
+\subsection{单接收器与双接收器基线}
+\label{subsec:ch6_single_dual_baseline}
+
+若旧单接收器链能够在相同坐标和动作定义下稳定运行，则以相同动作比较单接收器和双接收器
+的方向和肘角估计。若两种方法无法从同一次原始数据公平重建，应把此项列为辅助实验，不强行
+给出优劣结论。
+
+\section{碰撞保护实验}
+\label{sec:ch6_collision_experiment}
+
+\subsection{同轨迹开启/关闭对照}
+\label{subsec:ch6_collision_ablation}
+
+碰撞保护消融采用同一条记录轨迹的离线回放。首先记录包含大臂贴近身体、直臂下垂内收、
+弯肘胸前内收和标准侧举的五关节轨迹，然后分别在 C0（跳过碰撞过滤器）和 C1（启用保护且
+$d_{\min}=25\,\mathrm{mm}$）条件下处理。两种条件调用与在线重定向节点相同的正运动学、
+躯干几何和安全投影代码，因此其差异仅来自碰撞保护是否启用。使用同一输入轨迹可消除
+操作者重复动作差异造成的混杂；真机实验始终启用碰撞保护，不执行关闭保护的危险对照。
+
+\subsection{碰撞评价指标}
+\label{subsec:ch6_collision_metrics}
+
+设总有效帧数为 $N$，原始间隙和安全间隙分别为 $d_{\mathrm{raw}}(k)$ 与
+$d_{\mathrm{safe}}(k)$。定义
+\begin{align}
+  d_{\min}^{\mathrm{raw}}&=\min_k d_{\mathrm{raw}}(k),
+  &d_{\min}^{\mathrm{safe}}&=\min_k d_{\mathrm{safe}}(k),
+  \label{eq:ch6_min_clearances}\\
+  r_{\mathrm{penetration}}
+  &=\frac{1}{N}\sum_{k=1}^{N}\mathbb{I}[d(k)<0],
+  &r_{\mathrm{active}}
+  &=\frac{1}{N}\sum_{k=1}^{N}
+  \mathbb{I}[\text{filter active}],
+  \label{eq:ch6_collision_rates}\\
+  r_{\mathrm{hold}}
+  &=\frac{1}{N}\sum_{k=1}^{N}
+  \mathbb{I}[\text{previous safe target held}].
+  \label{eq:ch6_collision_hold_rate}
+\end{align}
+另外报告 shoulder roll 修正量的中位数、P95 和最大值，以及保护进入/退出附近的最大相邻
+命令变化
+\begin{equation}
+  J_q=\max_k
+  \left\|\boldsymbol q_c(k)-\boldsymbol q_c(k-1)\right\|_\infty.
+  \label{eq:ch6_collision_command_jump}
+\end{equation}
+安全有效帧应满足 $d_{\mathrm{safe}}\ge25\,\mathrm{mm}$，允许的数值容差为 0.1 mm。
+标准侧举等本来安全的动作还应检查过滤器是否保持透明。
+
+\section{G1 真机分阶段实验}
+\label{sec:ch6_real_robot_experiment}
+
+\subsection{进入正式真机实验的前置条件}
+\label{subsec:ch6_real_robot_prerequisites}
+
+只有当次标定具有真机资格、dry-run 方向正确、记录轨迹已通过离线关节限位和碰撞检查、
+G1 LowState 与 FSM 500 状态正常、Arm SDK 释放已验证、桥接器只读检查通过且现场吊架与急停准备完成时，
+才进入实时人体跟随。视觉准确性实验不要求机器人运动，应在真机实验之前独立完成。
+
+\subsection{分阶段动作矩阵}
+\label{subsec:ch6_real_robot_matrix}
+
+真机试验按表~\ref{tab:ch6_real_robot_stages} 逐级推进。任一阶段未通过时停止，不进入下一
+阶段。
+\begin{table}[htbp]
+  \centering
+  \caption{G1 真机的分阶段实验矩阵}
+  \label{tab:ch6_real_robot_stages}
+  \begin{tabularx}{\linewidth}{@{}lXXX@{}}
+    \toprule
+    阶段 & 动作 & 速度/范围 & 目的 \\
+    \midrule
+    R0 & LowState 与 bridge dry-run & 不发布命令 & 检查网络、索引和起始差值 \\
+    R1 & 固定单关节 $5^\circ$ 动作 & 低权重、慢速 & 验证方向、接管和释放 \\
+    R2 & 五关节分别递增的小范围动作 & $3$--$5^\circ/\mathrm s$ & 确认每轴跟踪和负载差异 \\
+    R3 & wrist $\pm15^\circ$，随后 $\pm25^\circ$
+       & $5^\circ/\mathrm s$，肘弯 $60^\circ$--$90^\circ$ & 评价旋前/旋后跟踪 \\
+    R4 & 五关节组合动作
+       & pitch/roll/elbow $60^\circ$ 包络；yaw $25^\circ$；wrist $30^\circ$；
+         $5^\circ/\mathrm s$ & 扩大安全工作区 \\
+    R5 & 重复 R4 & 相同包络；$8^\circ/\mathrm s$ & 评价速度增加后的跟踪 \\
+    R6 & 三个安全目标区域任务 & 使用已验证包络 & 任务级可行性 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+每个正式条件至少重复 3 次，并使用冻结的动作提示。动作包含回中、屈肘、前举、侧举、前举
+加屈肘、侧举加屈肘和弯肘转掌。若试次结束前没有返回起始姿态，应标记为动作脚本不完整，
+不能把未覆盖的回中过程视为通过。
+
+\subsection{真机关节跟踪指标}
+\label{subsec:ch6_real_tracking_metrics}
+
+分析使用安全桥实际发送的 $q_{d,i}$，而不是可能被包络裁剪的 source 或 applied 目标。
+编码器角为 $q_{\mathrm{act},i}$，误差为
+\begin{equation}
+  e_i(k)=
+  \operatorname{wrap}_{[-\pi,\pi)}
+  \left(q_{d,i}(k)-q_{\mathrm{act},i}(k)\right).
+  \label{eq:ch6_real_joint_error}
+\end{equation}
+对每个关节和每个试次计算
+\begin{align}
+  \operatorname{RMSE}_i
+  &=\sqrt{\frac{1}{N}\sum_{k=1}^{N}e_i(k)^2},
+  \label{eq:ch6_real_joint_rmse}\\
+  e_{i,95}&=P_{95}(|e_i|),\qquad
+  e_{i,\max}=\max_k |e_i(k)|.
+  \label{eq:ch6_real_joint_tail_errors}
+\end{align}
+动态滞后可通过命令速度和实际速度的互相关估计：
+\begin{equation}
+  \tau_i^\ast=
+  \arg\max_{\tau}
+  \operatorname{corr}\left(
+  \dot q_{d,i}(t),\dot q_{\mathrm{act},i}(t+\tau)\right).
+  \label{eq:ch6_tracking_delay}
+\end{equation}
+互相关只在具有足够动态幅值的动作段计算，并报告搜索范围和采样处理方法。
+
+\subsection{真机安全与平衡指标}
+\label{subsec:ch6_real_safety_metrics}
+
+每轮另外报告 IMU roll/pitch 的静止基线、RMS 和峰值，非活动关节及身体最大速度，UDP
+目标年龄的 median、P95 和最大值，超过 250 ms 的帧比例和最长空档，LAG-GUARD、包络
+裁剪、硬停止和超时释放次数，控制权重是否回零，以及是否发生踏步、脚滑、跌倒或实体急停。
+若目标流超时导致安全停止，该试次属于有效的安全事件记录，但不属于完成的跟踪试次。结果
+章应同时报告完成率和失败原因，不能简单删除中止试次。
+
+\section{实时性评价}
+\label{sec:ch6_realtime_evaluation}
+
+设连续有效输出的时间戳为 $t_k$，相邻更新间隔为
+\begin{equation}
+  \Delta t_k=t_k-t_{k-1}.
+  \label{eq:ch6_update_interval}
+\end{equation}
+有效输出频率定义为
+\begin{equation}
+  f_{\mathrm{median}}=
+  \frac{1}{\operatorname{median}(\Delta t_k)}.
+  \label{eq:ch6_median_update_rate}
+\end{equation}
+除中位频率外，还报告 $\Delta t_k$ 的中位数、P95、P99 和最大值。对给定时间门槛
+$\delta$，长间隔比例定义为
+\begin{equation}
+  r_{\Delta t>\delta}=
+  \frac{1}{N-1}\sum_{k=2}^{N}
+  \mathbb{I}[\Delta t_k>\delta].
+  \label{eq:ch6_long_interval_ratio}
+\end{equation}
+本文分别取 $\delta=40\,\mathrm{ms}$、$100\,\mathrm{ms}$ 和 $250\,\mathrm{ms}$，用于区分
+普通时序抖动和可能影响闭环控制的中断。如果设备提供可靠的硬件帧序号，则另外按序号计算
+丢帧率；否则只报告有效更新率和时间空档，不把由时间间隔推断的数值称为精确硬件丢包率。
+
+UDP 发送时间与宿主机接收时间只反映 Docker 到安全桥的本机传输。EM 原始采集、滤波、
+安全桥和机器人动力学共同构成的端到端延迟，应通过同步视觉事件或目标与编码器的动态响应
+另行估计，二者不能合并为一个延迟指标。
+
+\section{数据质量、排除规则与缺失数据}
+\label{sec:ch6_exclusion_missing_data}
+
+\subsection{整次安装或试次重做条件}
+\label{subsec:ch6_whole_trial_exclusion}
+
+出现以下任一情况时，相关安装或完整试次被判为无效并重新采集：相机外参完成后手机或支架
+发生移动；录像期间手机自动切换镜头、分辨率或明显改变数字变焦；EM 接收器、发射器或视觉
+标记相对身体发生明显位移；标定未保存、标定质量门槛失败或错误复用了旧安装参数；两段视频
+无法通过开始和结束事件对齐；retargeting NPZ 或真机 CSV 未完整保存；EM 持续输出无效
+四元数、出现长时间中断或动作顺序无法辨认。
+
+\subsection{局部帧和动作段排除}
+\label{subsec:ch6_local_frame_exclusion}
+
+视觉标记短暂遮挡、单帧严重运动模糊或重投影误差超过预设门槛、LED 瞬间过曝但其他同步
+事件仍有效，以及不属于预定义保持段的动作过渡，只排除相应局部帧或动作段。直臂姿态中的
+yaw/wrist 不作为轴向角准确性统计对象。
+
+所有排除由预先定义的自动规则或不依赖方法输出的动作时间表决定。结果中同时报告双标记
+共同可见率、单相机可见率、排除帧比例和最长连续缺失时间，不允许在观察误差结果后手工
+删除表现较差的帧。
+
+\section{统计方法}
+\label{sec:ch6_statistical_methods}
+
+\subsection{描述统计与统计单位}
+\label{subsec:ch6_descriptive_statistics}
+
+对每个保持段或动作试次计算 RMSE、中位数、P95 和最大值。每次安装内部先汇总重复试次，
+再以安装级指标作为跨安装统计样本，避免把同一次安装中高度相关的数千个视频帧误当成独立
+样本。近似对称分布使用均值和标准差表示，明显偏态或包含少量大误差的分布使用中位数和
+四分位距表示。跨 10 次安装同时展示安装级散点或箱线图，不只报告一个总体平均数。
+
+\subsection{配对比较}
+\label{subsec:ch6_paired_comparison}
+
+模型消融使用同一安装、同一原始轨迹和同一组视觉帧，因而采用安装内配对差
+\begin{equation}
+  \Delta m_s=m_{s,A}-m_{s,B},
+  \label{eq:ch6_paired_metric_difference}
+\end{equation}
+其中 $s$ 为安装编号，$m$ 可表示方向 RMSE、肘角 RMSE 或无效帧比例。主要报告配对差的
+中位数、四分位距，以及按安装重采样得到的 95\% bootstrap 置信区间。若需要进行显著性
+检验，小样本优先使用双侧 Wilcoxon 配对符号秩检验；涉及多项比较时说明校正方法。统计
+显著性不等同于工程重要性，因此同时报告绝对误差差值和相对变化。
+
+\subsection{成功率与安全事件}
+\label{subsec:ch6_success_safety_events}
+
+对标定合格、动作完成和真机安全释放等二元结果，成功率定义为
+\begin{equation}
+  r_{\mathrm{success}}=
+  \frac{N_{\mathrm{success}}}{N_{\mathrm{attempted}}}.
+  \label{eq:ch6_success_rate}
+\end{equation}
+报告时明确分母是否包含通信超时、操作者动作错误和设备故障。失败试次按预设类别计数，
+后续重新运行成功不能覆盖第一次失败记录。
+
+\section{预设工程验收线}
+\label{sec:ch6_acceptance_thresholds}
+
+表~\ref{tab:ch6_acceptance_thresholds} 给出正式采集前冻结的工程目标。这些阈值用于统一
+通过/失败判定，不是电磁跟踪、人体运动学或人形机器人领域的通用标准，也不得在查看正式
+结果后调整。
+\begin{table}[htbp]
+  \centering
+  \caption{正式实验的预设工程目标}
+  \label{tab:ch6_acceptance_thresholds}
+  \begin{tabularx}{\linewidth}{@{}XX@{}}
+    \toprule
+    项目 & 预设目标 \\
+    \midrule
+    静止 pitch/roll/elbow 标准差 & 小于 $2^\circ$ \\
+    静止 yaw/wrist 标准差 & 小于 $3^\circ$ \\
+    同一姿势三次肩部终点差 & 小于 $5^\circ$ \\
+    同一姿势三次肘部终点差 & 小于 $8^\circ$ \\
+    有独立视觉参考时的肢段方向 RMSE & 目标小于 $10^\circ$，同时报告 P95 \\
+    有效输出频率 & $45$--$55\,\mathrm{Hz}$ \\
+    最长有效输出中断 & 小于 $250\,\mathrm{ms}$ \\
+    慢速真机左臂跟踪 RMSE & 目标小于 $3^\circ$ \\
+    慢速真机最大跟踪误差 & $5^\circ$ 为硬停止阈值，同时报告实际最大值 \\
+    碰撞层安全间隙 & 所有有效帧不小于 $25\,\mathrm{mm}$ \\
+    碰撞或 URDF 限位违规 & 0 \\
+    站立试验基座 roll/pitch & 建议峰值小于 $3^\circ$，并相对静止基线报告 \\
+    正常试验中的踏步、跌倒和实体急停 & 0 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+未达到某项目标并不意味着删除该组数据，而是形成需要在结果章讨论的发现。例如，若方向
+RMSE 超过 $10^\circ$ 但重复性较好，应进一步区分稳定固定偏差和随机不稳定；若真机关节
+跟踪误差较小而人体视觉误差较大，则主要瓶颈位于人体姿态估计而非机器人执行。
+
+\section{结果呈现规划}
+\label{sec:ch6_result_presentation_plan}
+
+第7章计划至少给出以下结果：10 次重新佩戴的标定质量与合格率；各动作的大臂方向、前臂
+方向和肘角误差；视觉参考自身的双相机一致性与标记可见率；姿态法、球面位置法和仿射位置
+法的配对消融；碰撞保护开启/关闭时的原始间隙、安全间隙与 roll 修正量；G1 五关节命令
+和编码器角；以及真机关节误差、UDP 目标年龄、LowState 状态和安全事件汇总。
+
+图中应同时显示原始安装级数据点和统计摘要。代表性时序按照预设规则选择，例如选取主要
+误差指标最接近全部试次中位数的完整试次，而不是人工挑选最平滑或最美观的一次。
+
+\section{本章小结}
+\label{sec:ch6_summary}
+
+本章建立了覆盖传感器、人体估计、安全重定向和真机执行的分层评价方法。人体估计
+精度使用两台固定手机和刚性视觉标记作为独立参考，并通过内参、外参、标记--肢段对齐及
+起止同步事件量化视觉系统自身的不确定度。正式方案以安装而非视频帧作为主要统计单位，
+计划完成至少 10 次独立重新佩戴，并在每次安装中执行固定的静态和动态动作。
+
+针对方法中的关键设计，本章规定了大臂姿态法、球面位置法和仿射位置法的同轨迹消融，
+以及肘角修正前后的独立比较。碰撞保护采用同一记录轨迹的开启/关闭离线回放，避免在真机
+上执行危险对照。G1 真机采用由只读检查、固定小动作、单轴、组合动作到任务演示的渐进
+流程，并分别评价命令--编码器误差、机身姿态、目标流连续性和安全释放。
+
+下一章将按照本章冻结的分段、指标和排除规则报告实际结果。预实验与正式数据、标定一致性
+与独立精度、人体估计误差与机器人执行误差将在结果分析中保持分离。
+
+% ---------------------------------------------------------------------------
+% 合并到正式论文前的待办项（仅供作者，不进入最终正文）
+% 1. 完成双手机内参、外参、ArUco 姿态融合和时间对齐脚本，并用预实验验证。
+% 2. 确定最终参与者数量，补充伦理审批或知情同意说明。
+% 3. 冻结动作音频、动作时间表、实验参数和 Git 版本。
+% 4. 在正式实验前冻结视觉重投影误差和插值最大间隔的数值门槛。
+% 5. 决定是否保留单接收器基线；若无法公平比较，则从主要实验中移除。
+% 6. 为碰撞保护的同轨迹离线回放编写可重复执行的分析脚本。
+% 7. 为每项指标编写自动分析脚本，禁止从终端打印值手工抄录。
+% 8. 正式采集后只把真实完成的试次、样本量和参数写入最终论文。
+% 9. 按学校模板统一图、表、公式和实验编号，并补充实验方法参考文献。
