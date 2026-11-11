@@ -1,0 +1,10 @@
+protocol,repeat,raw_csv,formal_tracking_rows,formal_duration_s,composite_rmse_deg,selected_for_timeseries
+R0,1,g1_arm_tracking_20261110T152251Z.csv,3001,59.982233,0.992341,no
+R0,2,g1_arm_tracking_20261110T153952Z.csv,3001,59.983281,0.836560,no
+R0,3,g1_arm_tracking_20261110T154205Z.csv,3001,59.981710,0.815168,no
+R1,1,g1_arm_tracking_20261110T153110Z.csv,12001,239.982209,0.961947,yes
+R1,2,g1_arm_tracking_20261110T162625Z.csv,12001,239.981889,0.936554,no
+R1,3,g1_arm_tracking_20261110T164319Z.csv,12001,239.981638,1.010698,no
+R2,1,g1_arm_tracking_20261110T153633Z.csv,12001,239.981624,0.974177,no
+R2,2,g1_arm_tracking_20261110T163243Z.csv,12001,239.981675,0.989422,yes
+R2,3,g1_arm_tracking_20261110T163802Z.csv,12001,239.981616,0.991444,no
