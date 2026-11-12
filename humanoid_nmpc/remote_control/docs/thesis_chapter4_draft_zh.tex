@@ -7,12 +7,37 @@
 \chapter{自适应标定与人体手臂姿态估计}
 \label{chap:adaptive_calibration_arm_estimation}
 
-\begin{quote}
-\itshape
-写作说明：本章依据当前 \texttt{dual\_receiver\_hybrid} 实现撰写，重点描述双接收器同步
-采集、安装级标定、人体左臂五自由度估计以及不可观测区域处理。正文中的图号、表号和文献
-编号需要在并入最终论文后统一调整；标有“待补充文献”的位置不应在提交前保留。
-\end{quote}
+\section{安装标定与姿态估计相关研究}
+\label{sec:ch4_related_calibration}
+
+可穿戴传感器报告的是传感器外壳相对参考坐标系的位姿，而人体运动分析需要的是肢段坐标系或
+关节变量。两者之间的传感器--肢段关系会随佩戴位置和朝向改变，是可穿戴上肢测量中的核心
+误差来源。国际生物力学学会（ISB）给出了肩、肘、腕和手部坐标系及关节运动报告的推荐
+定义，为不同测量系统之间统一轴向和角度语义提供了基础~\cite{wu2005isb}。Picerno 等通过
+解剖标志点建立上肢惯性传感器与肢段坐标系之间的关系，并使用光学
+系统验证肩、肘运动学~\cite{picerno2019upper}。Seel 等利用运动学约束从功能动作中识别关节轴，
+说明不必要求传感器外壳与解剖轴精确平行~\cite{seel2014imu}。Zabat 等进一步表明，相比单一
+静态姿势，多姿态信息可以减小安装偏差和软组织运动引起的角度误差~\cite{zabat2019multiple}。
+近期研究还指出，待测系统与参考系统若采用不同的传感器--肢段定义，会形成明显的系统性关节角
+偏差~\cite{adjel2025influence}。
+
+现有标定方法大体可分为静态、功能性和多姿态方法。静态方法操作简单，但对参考姿势执行误差
+敏感；功能性方法通过重复运动拟合关节轴，降低了对安装朝向的要求，但依赖充分且近似单轴的
+动作激励；多姿态方法利用若干互补方向联合估计安装关系，并可通过各姿态残差发现错误动作或
+绑带移动。对肩部三自由度、肘部屈伸和前臂轴向旋转同时估计时，单一姿态不能提供足够约束，
+尤其在大臂与前臂接近共线时，肘角和轴向旋转的可观测性会降低。
+
+Cutti 等使用惯性与磁传感器进行肩、肘动态测量的研究也表明，统一的肢段定义、安装标定和
+磁环境检查是获得可解释上肢角度的共同前提~\cite{cutti2008ambulatory}。
+
+电磁设备还存在“设备场标定”与“人体安装标定”两个不同层次。前者从已知空间位姿建立电磁
+观测与接收器位姿之间的映射，并处理工作空间内的位置相关误差；相关综述与标准化评估研究
+均指出，金属畸变、工作距离和空间位置会共同影响电磁跟踪误差
+~\cite{kindratenko2000survey,frantz2003accuracy,hummel2006evaluation,franz2014electromagnetic,
+maclachlan2025calibration}。后者在设备位姿已经
+可用的前提下，估计接收器外壳与人体肢段之间的关系。本文不修改设备固件或制造商场模型，而是
+针对每次佩戴执行多姿态安装级标定，并把姿态残差、位置模型残差和重复性作为进入在线估计前的
+质量门控。
 
 \section{问题描述与总体思路}
 \label{sec:ch4_problem_overview}
@@ -22,7 +47,9 @@
 的频率输出两个接收器的三维位置和姿态。与基于人体外观的视觉方法相比，电磁测量不依赖
 纹理和光照，也不存在人体自身造成的直接视觉遮挡。然而，接收器在每次佩戴后的安装朝向
 并不相同，绑带和软组织还会使接收器运动偏离理想的刚体关节模型。因此，原始接收器位姿
-不能直接作为机器人关节角使用，必须先完成针对本次安装的标定。
+不能直接作为机器人关节角使用，必须先完成针对本次安装的标定。这里的“原始位姿”专指
+设备直接报告的接收器外壳相对发射器的位置和旋转；它尚未去除外壳安装角，也尚未转换为
+人体大臂、前臂方向或关节角。
 
 本章所研究的问题可表述为：给定大臂接收器和前臂接收器在电磁发射器坐标系中的同步位姿，
 估计人体左臂的五个运动量
@@ -67,30 +94,35 @@
   \centering
   \caption{人体手臂估计使用的坐标系}
   \label{tab:ch4_coordinate_frames}
-  \begin{tabularx}{\linewidth}{@{}lX@{}}
+  \begin{tabularx}{\linewidth}{@{}llX@{}}
     \toprule
-    符号 & 含义 \\
+    符号 & 英文含义 & 物理含义 \\
     \midrule
-    $\{T\}$ & 电磁发射器坐标系 \\
-    $\{B\}$ & 人体标准坐标系，与机器人约定一致：$+x$ 向前、$+y$ 向左、$+z$ 向上 \\
-    $\{U\}$ & 大臂接收器局部坐标系 \\
-    $\{F\}$ & 前臂接收器局部坐标系 \\
+    $\{T\}$ & Transmitter & 电磁发射器坐标系 \\
+    $\{B\}$ & Body & 人体标准坐标系，与机器人约定一致：$+x$ 向前、$+y$ 向左、$+z$ 向上 \\
+    $\{U\}$ & Upper arm & 大臂接收器局部坐标系 \\
+    $\{F\}$ & Forearm & 前臂接收器局部坐标系 \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
 记 ${}^{T}\boldsymbol p_U$ 和 ${}^{T}\boldsymbol p_F$ 为两个接收器在 $\{T\}$ 中的位置，
 ${}^{T}\boldsymbol R_U$ 和 ${}^{T}\boldsymbol R_F$ 为将接收器局部向量旋转到 $\{T\}$ 的
-旋转矩阵。${}^{B}\boldsymbol u$ 和 ${}^{B}\boldsymbol f$ 分别表示人体大臂和前臂在
-$\{B\}$ 中的单位方向。所谓单位方向，是指只保留肢段的朝向而忽略其长度，即
+旋转矩阵。上标表示量所在的表达坐标系，下标表示被描述的对象；例如
+${}^{T}\boldsymbol p_U$ 表示“大臂接收器的位置，用发射器坐标系表达”。
+${}^{B}\boldsymbol u$ 和 ${}^{B}\boldsymbol f$ 分别表示人体大臂和前臂在
+$\{B\}$ 中的单位方向。本文所称“肢段”是由相邻关节界定、在当前模型中近似视为刚体的
+身体部分：大臂肢段连接肩与肘，前臂肢段连接肘与腕。所谓单位方向，是指只保留肢段的朝向
+而忽略其长度，即
 \begin{equation}
   \lVert{}^{B}\boldsymbol u\rVert_2=1,
   \qquad
   \lVert{}^{B}\boldsymbol f\rVert_2=1.
   \label{eq:ch4_unit_segment_directions}
 \end{equation}
-将单位向量的起点置于坐标原点时，其终点位于单位球面上。这里的单位球面是描述所有可能
-方向的数学空间，并不表示人体肩关节或接收器在物理上沿单位球面运动。
+将单位向量平移到 $\{B\}$ 的数学原点后，其终点位于单位球面上。向量是自由向量，平移
+起点不会改变其方向；因此这里的单位球面只是统一表示所有三维方向的数学空间，并不要求
+人体肩关节位于 $\{B\}$ 原点，也不表示接收器在物理上沿半径为 1 的球面运动。
 
 为与 G1 关节模型保持一致，本研究将零位大臂方向和零位前臂方向定义为
 \begin{equation}
@@ -100,10 +132,22 @@ $\{B\}$ 中的单位方向。所谓单位方向，是指只保留肢段的朝向
   \label{eq:ch4_zero_segment_axes}
 \end{equation}
 因此，零位对应“大臂自然下垂、肘部弯曲约 $90^\circ$、前臂水平向前”的姿态。
-这里的“零位方向”是运动学模型的参考方向，并非接收器局部坐标轴，也不等同于医学上的
+这里的“零位方向”是运动学模型在所有广义坐标均为零时规定的参考方向，并非接收器局部
+坐标轴，也不等同于医学上的
 标准解剖姿势。当所有模型关节变量为零时，大臂和前臂方向分别等于
 $\boldsymbol a_{u,0}$ 和 $\boldsymbol a_{f,0}$；其他姿态均由关节旋转作用于这两个参考
-方向得到。
+方向得到。图~\ref{fig:ch4_frames_zero_pose} 汇总了坐标轴、接收器和零位方向之间的关系。
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.90\linewidth}{\centering
+    示意图内容：人体左臂处于 DOWN 零位；标出 $\{B\}$ 的 $+x$ 前、$+y$ 左、$+z$ 上，
+    发射器坐标系 $\{T\}$，大臂与前臂接收器坐标系 $\{U\}$、$\{F\}$，以及
+    $\boldsymbol a_{u,0}=[0,0,-1]^{\mathrm T}$ 和
+    $\boldsymbol a_{f,0}=[1,0,0]^{\mathrm T}$。}}
+  \caption{双接收器安装、坐标系与运动学零位示意（待替换为正式绘图）}
+  \label{fig:ch4_frames_zero_pose}
+\end{figure}
 
 \subsection{五自由度运动学模型}
 \label{subsec:ch4_five_dof_model}
@@ -114,7 +158,8 @@ $\boldsymbol a_{u,0}$ 和 $\boldsymbol a_{f,0}$；其他姿态均由关节旋转
   =5\ \text{DOF}.
   \label{eq:ch4_five_dof_count}
 \end{equation}
-肩部三个变量确定大臂的空间方向及绕大臂轴的旋转，$q_e$ 描述肘部由弯曲向伸直的变化，
+肩部三个变量 $q_p$（pitch，前举/后摆）、$q_r$（roll，外展/内收）和 $q_y$（yaw，绕
+大臂纵轴旋转）共同确定大臂的空间方向及肘平面朝向；$q_e$ 描述肘部由弯曲向伸直的变化，
 $q_w$ 描述前臂旋前/旋后。本模型没有包含 G1 腕部的 pitch 和 yaw，也没有单独描述肩胛带
 运动，因此应理解为面向动作重定向的五自由度表示，而非完整的人体上肢解剖模型。
 
@@ -135,6 +180,13 @@ $q_w$ 描述前臂旋前/旋后。本模型没有包含 G1 腕部的 pitch 和 y
   {}^{B}\boldsymbol f={}^B\boldsymbol R_E\boldsymbol a_{f,0}.
   \label{eq:ch4_segment_directions}
 \end{equation}
+
+式~\eqref{eq:ch4_shoulder_rotation} 的乘法顺序是模型定义的一部分，不能任意交换。本文采用
+列向量和主动旋转约定，因此右侧旋转先作用：按矩阵作用顺序，零位肢段依次接受
+$\boldsymbol R_z(q_y)$、$\boldsymbol R_x(q_r)$ 和 $\boldsymbol R_y(q_p)$。各轴均以本章统一的
+矩阵约定解释，而不是在推导中临时更换为另一套欧拉角约定。矩阵乘法不满足交换律，改变顺序会改变同一组
+角度对应的空间姿态。本顺序与工程中 G1 左肩三个关节的语义保持一致，而不是声称它是唯一的
+人体解剖角定义；解剖学结果的轴序应另按 ISB 推荐报告~\cite{wu2005isb}。
 
 该模型的优点是人体估计量与 G1 五个左臂关节具有一致的语义，避免了先恢复完整人体骨架
 再进行第二次逆运动学求解。模型的限制是：仅由两个肢段方向不能在所有姿态下唯一分离肩部
@@ -165,7 +217,10 @@ $q_w$ 描述前臂旋前/旋后。本模型没有包含 G1 腕部的 pitch 和 y
 旋转矩阵虽然包含九个元素，但正交和单位长度约束使其只有三个独立自由度。也可以将其理解
 为“一个轴的空间方向”所需的两个自由度，加上“绕该轴旋转”所需的一个自由度。
 
-完成安装标定后，在线估计实际使用两类几何信息：大臂单位方向
+“安装标定”与“在线估计”是前后相接的两个阶段。安装标定只在重新佩戴后执行，利用已知
+参考姿势求出坐标对齐、局部肢段轴、位置模型和角度修正参数；在线估计则在每一个同步采样
+时刻使用这些固定参数，把未知动作转换为五自由度状态，不再重新拟合参数。完成安装标定后，
+在线估计实际使用两类几何信息：大臂单位方向
 ${}^{B}\hat{\boldsymbol u}\in S^2$，以及经过安装对齐的前臂完整姿态
 ${}^{B}\boldsymbol R_F\in SO(3)$。因此可用独立信息量为
 \begin{equation}
@@ -217,10 +272,12 @@ ${}^{B}\boldsymbol R_F\in SO(3)$。因此可用独立信息量为
   \item 两个原始四元数均通过有效性检查。
 \end{enumerate}
 
-通过检查后，系统给两个 \texttt{PoseStamped} 消息赋予同一个 ROS 时间戳，并分别发布至
+通过检查后，系统给两个 \texttt{geometry\_msgs/PoseStamped} 消息赋予同一个 ROS 时间戳。
+该消息由三维位置、四元数姿态、参考坐标系标识和时间戳组成。两条消息分别发布至 ROS 话题
 \texttt{/em/upper\_arm\_pose} 和 \texttt{/em/forearm\_pose}。这样，后续标定和在线估计
 可按相同时间戳进行严格配对。WEMT 接口内部的平滑窗口被设为 1，即发布未经时间平均的
-原始样本，避免位置和姿态使用不同滤波造成额外的相位差；统一滤波在完成双流配对后进行。
+单帧样本；这里的 1 是窗口中包含的样本数，而不是 1 秒。该设置避免位置和姿态使用不同
+滤波造成额外的相位差；统一滤波在完成双流配对后进行。
 
 \subsection{四元数有效性与旋转矩阵}
 \label{subsec:ch4_quaternion_validation}
@@ -249,10 +306,13 @@ ${}^{B}\boldsymbol R_F\in SO(3)$。因此可用独立信息量为
 \label{eq:ch4_quaternion_to_rotation}
 \end{equation}
 
-设备数据文档未完全确定四元数表示的是“接收器到发射器”还是其逆变换。系统因而在标定时
+由于当前设备接口只明确四元数分量顺序，而接收器到发射器的主动/被动旋转方向仍需由系统
+侧验证，系统在标定时
 分别评价原旋转矩阵 $\boldsymbol R$ 和转置矩阵 $\boldsymbol R^{\mathrm T}$。选择标准以前臂
 旋转轴在多参考姿势下的方向残差为主，以相对旋转残差作为分数接近时的辅助判据。最终选定
-的约定被写入当次标定文件，并在在线估计中保持一致。
+的约定被写入当次标定文件，并在在线估计中保持一致。这一步不是任意改变四元数分量，而是
+在互为逆旋转的两种物理解释之间进行一次安装级一致性检验；若后续由设备协议明确方向，仍可
+保留该检验作为接线或固件变化的诊断。
 
 \section{安装级自适应标定}
 \label{sec:ch4_installation_calibration}
@@ -273,9 +333,10 @@ ${}^{B}\boldsymbol R_F\in SO(3)$。因此可用独立信息量为
 \end{figure}
 
 标定开始前，操作者保持自然站立，系统采集 $4\,\mathrm{s}$ 静态数据，用于计算位置和姿态
-噪声。随后，操作者在保持大臂基本不动的情况下反复屈伸肘部并转动前臂。若前臂主题的姿态
-变化明显大于大臂主题，才认为两个接收器的身份与安装位置正确。最后，操作者保持大臂竖直、
-肘部弯曲约 $90^\circ$，仅进行旋前/旋后，用于辨识前臂接收器局部坐标系中的旋转轴。
+噪声。随后，操作者在保持大臂基本不动的情况下反复屈伸肘部并转动前臂。若前臂接收器的
+姿态变化明显大于大臂接收器，才认为两个接收器的身份与安装位置正确。最后，操作者保持大臂
+竖直、肘部弯曲约 $90^\circ$，仅使前臂绕“肘到腕”的纵轴做旋前/旋后，用于辨识前臂接收器
+局部坐标系中的旋转轴。
 
 七个静态参考姿势及其理论角度见表~\ref{tab:ch4_reference_poses}。每个姿势离开后重新构建
 3 次，每次保持 $2\,\mathrm{s}$。这种“离开---重建---保持”的方式能够发现单次摆姿偶然
@@ -300,6 +361,21 @@ ${}^{B}\boldsymbol R_F\in SO(3)$。因此可用独立信息量为
   \end{tabularx}
 \end{table}
 
+图~\ref{fig:ch4_reference_pose_set} 给出七个参考姿势应呈现的肢段关系。FORWARD\_30 和
+FORWARD\_60 的角度不要求操作者用量角器达到绝对精确值；其作用是为前举路径增加两个
+中间方向。操作者应优先保证躯干不动、动作平面一致、肘部状态正确以及三次重复可重现，实际
+偏差将反映在参考残差和位置模型残差中。
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\centering
+    示意图内容：依次绘制 DOWN、FORWARD\_30、FORWARD\_60、FORWARD、SIDEWAYS、
+    STRAIGHT\_DOWN 和 STRAIGHT\_FORWARD；用实线表示大臂、虚线表示前臂，并标注
+    “弯肘约 $90^\circ$”或“伸肘”以及前举/侧举方向。}}
+  \caption{七个安装标定参考姿势及其肢段约束（待替换为实拍图或正式绘图）}
+  \label{fig:ch4_reference_pose_set}
+\end{figure}
+
 FORWARD\_30 和 FORWARD\_60 只用于提高大臂位置模型在前举路径上的可辨识性；前臂方向
 拟合使用 DOWN、FORWARD、SIDEWAYS、STRAIGHT\_DOWN 和 STRAIGHT\_FORWARD 五类姿势。
 
@@ -315,11 +391,14 @@ FORWARD\_30 和 FORWARD\_60 只用于提高大臂位置模型在前举路径上�
 \end{equation}
 
 姿态中心采用旋转矩阵均值在 $SO(3)$ 上的最近旋转，姿态波动则用每个样本到中心旋转的
-测地角计算 RMS。当前工程实现中，当任一接收器的位置 RMS 超过 $3\,\mathrm{mm}$，或姿态
+测地角计算 RMS。由于旋转不能像普通欧氏向量那样逐元素平均后直接使用，最近旋转投影和
+四元数/旋转平均是姿态处理中常用的几何做法~\cite{hartley2013rotation,markley2007averaging}。
+当前工程实现中，当任一接收器的位置 RMS 超过 $3\,\mathrm{mm}$，或姿态
 RMS 超过 $3^\circ$ 时，系统提示检查绑带、金属物体和跟踪距离。
 
-每个参考姿势的三次重复使用旋转 medoid 作为代表样本，即选择到其他重复样本角距离总和
-最小的一个旋转。若任一重复与代表样本之间的最大角距离超过 $15^\circ$，则只重新采集当前
+每个参考姿势的三次重复使用旋转 medoid（样本中心）作为代表，即只在三个实际观测中选择
+一个，使它到其余观测的旋转测地距离总和最小。与直接平均相比，medoid 必然是一个真实采集
+样本，对单次离群姿态更稳健。若任一重复与代表样本之间的最大角距离超过 $15^\circ$，则只重新采集当前
 姿势，已经通过的姿势继续保留。该策略避免一次摆姿错误使整轮标定全部作废，同时保证每个
 参考姿势具有最低重复性。
 
@@ -327,14 +406,17 @@ RMS 超过 $3^\circ$ 时，系统提示检查绑带、金属物体和跟踪距�
 \label{subsec:ch4_forearm_twist_axis}
 
 在理想旋前/旋后动作中，前臂在发射器坐标系中的纵轴方向保持近似不变，而接收器绕该轴
-转动。设第 $i$ 个前臂接收器旋转矩阵为 ${}^{T}\boldsymbol R_{F,i}$，希望找到局部单位向量
+转动。实际只有一个前臂接收器，下标 $i$ 表示该接收器在第 $i$ 个采样时刻的观测。设其旋转
+矩阵为 ${}^{T}\boldsymbol R_{F,i}$，希望找到接收器外壳坐标系中的局部单位向量
 $\boldsymbol a_t$，使
 \begin{equation}
   {}^{T}\boldsymbol R_{F,i}\boldsymbol a_t\approx\boldsymbol d_t,
   \qquad i=1,\ldots,N,
   \label{eq:ch4_twist_axis_invariance}
 \end{equation}
-其中，$\boldsymbol d_t$ 为发射器坐标系中的稳定旋转轴。令
+其中，$\boldsymbol d_t$ 为发射器坐标系中的稳定旋转轴。寻找 $\boldsymbol a_t$ 的目的，是把
+任意安装朝向下的“接收器外壳某一轴”辨识为人体前臂纵轴；若轴选择正确，接收器即使绕它
+转动，该轴变换到发射器坐标系后的方向仍应近似不变。令
 \begin{equation}
   \bar{\boldsymbol R}_F=\frac{1}{N}
   \sum_{i=1}^{N}{}^{T}\boldsymbol R_{F,i},
@@ -347,7 +429,11 @@ $\boldsymbol a_t$，使
   \lVert\bar{\boldsymbol R}_F\boldsymbol a\rVert_2,
   \label{eq:ch4_twist_axis_svd}
 \end{equation}
-即 $\bar{\boldsymbol R}_F$ 最大奇异值对应的右奇异向量。系统对残差进行基于中位数绝对
+即 $\bar{\boldsymbol R}_F$ 最大奇异值对应的右奇异向量。式
+~\eqref{eq:ch4_twist_axis_invariance} 给出物理不变性，式
+~\eqref{eq:ch4_mean_forearm_rotation} 将全部姿态观测聚合，式
+~\eqref{eq:ch4_twist_axis_svd} 则寻找经这些旋转后最不发散的局部方向；最大奇异值对应方向
+正是保持合向量长度最大的方向。系统对残差进行基于中位数绝对
 偏差的迭代剔除，降低偶发姿态跳变的影响；同时通过样本对之间的相对旋转检查动作范围。
 只有当前臂旋转范围至少达到 $55^\circ$、大臂姿态变化不超过 $15^\circ$，且旋转轴拟合
 RMS 不超过 $15^\circ$ 时，才继续执行后续标定。
@@ -380,6 +466,24 @@ $\boldsymbol M\in\mathbb R^{3\times3}$ 为从人体标准方向到发射器坐�
 $\boldsymbol\varepsilon_i$ 汇集摆姿误差、软组织运动和测量噪声。$\boldsymbol c$ 是用于
 位置--方向映射的虚拟中心，不应直接解释为解剖学肩关节中心。
 
+这里称为“混合模型”，是因为大臂方向主要由接收器\emph{位置}恢复，而前臂方向和轴向
+旋转由接收器\emph{姿态}恢复。所谓“恢复大臂方向”，是指由测得的位置
+${}^{T}\boldsymbol p_U$ 反求单位向量 ${}^{B}\hat{\boldsymbol u}$，而不是估计大臂长度或
+肩关节中心。图~\ref{fig:ch4_affine_geometry} 给出式~\eqref{eq:ch4_upper_affine_model} 的
+几何含义。
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\centering
+    示意图内容：以 $\boldsymbol c$ 为椭球中心，单位方向
+    ${}^{B}\boldsymbol u_i^{*}$ 经过 $\boldsymbol M$ 映射为从 $\boldsymbol c$ 指向
+    ${}^{T}\boldsymbol p_{U,i}$ 的位移；标出实测点、重投影点 $\hat{\boldsymbol p}_U$、
+    残差 $\boldsymbol\varepsilon_i$ 与模型误差 $e_M$。左侧可并列绘制单位球，右侧绘制其
+    经过 $\boldsymbol M$ 后的椭球像。}}
+  \caption{大臂仿射位置--方向模型的几何解释（待替换为正式绘图）}
+  \label{fig:ch4_affine_geometry}
+\end{figure}
+
 该模型被称为“仿射椭球”，是因为单位方向满足
 $({}^{B}\boldsymbol u)^{\mathrm T}{}^{B}\boldsymbol u=1$。忽略噪声并令
 $\boldsymbol x={}^{T}\boldsymbol p_U-\boldsymbol c$，由
@@ -389,7 +493,10 @@ $\boldsymbol x=\boldsymbol M{}^{B}\boldsymbol u$ 可得
   \boldsymbol M^{-1}\boldsymbol x=1,
   \label{eq:ch4_affine_ellipsoid_implicit}
 \end{equation}
-这正是以 $\boldsymbol c$ 为中心的椭球面二次型。若对矩阵作奇异值分解
+这里引入 $\boldsymbol x$ 只是为了简化表达：它是从虚拟中心 $\boldsymbol c$ 指向当前接收器
+位置的位移，不是新的测量量。将 ${}^{B}\boldsymbol u=\boldsymbol M^{-1}\boldsymbol x$
+代回单位长度约束即可得到式~\eqref{eq:ch4_affine_ellipsoid_implicit}，这正是以
+$\boldsymbol c$ 为中心的椭球面二次型。若对矩阵作奇异值分解
 \begin{equation}
   \boldsymbol M=\boldsymbol U\boldsymbol\Sigma\boldsymbol V^{\mathrm T},
   \qquad
@@ -397,8 +504,10 @@ $\boldsymbol x=\boldsymbol M{}^{B}\boldsymbol u$ 可得
   \label{eq:ch4_affine_matrix_svd}
 \end{equation}
 则 $\boldsymbol U$ 给出椭球主轴方向，$\sigma_1,\sigma_2,\sigma_3$ 给出三个半轴长度。
-当三个奇异值相等且 $\boldsymbol M=r\boldsymbol R$ 时，模型退化为半径为 $r$ 的球面模型。
-因此，椭球是“单位方向球面经过本次安装相关线性变换后的像”，而不是对人体肩关节形状的
+当三个奇异值相等时，说明三个主方向的尺度相同；若
+$\boldsymbol M=r\boldsymbol R$，线性变换只包含统一尺度 $r$ 和旋转 $\boldsymbol R$，模型便
+退化为半径为 $r$ 的球面。若奇异值不同，单位球在三个主方向上被拉伸为不同半轴长度，形成
+椭球。因此，椭球是单位方向集合经过本次安装相关线性变换后的位置轨迹，而不是对人体肩关节形状的
 解剖学假设。实际七个参考姿势只覆盖该椭球面的有限区域，本模型应理解为工作空间内的经验
 标定模型，而非完整肩部轨迹的全局物理模型。
 
@@ -413,8 +522,11 @@ $\boldsymbol x=\boldsymbol M{}^{B}\boldsymbol u$ 可得
   \label{eq:ch4_upper_affine_fit}
 \end{equation}
 式~\eqref{eq:ch4_upper_affine_fit} 对 $\boldsymbol c$ 和 $\boldsymbol M$ 是线性最小二乘
-问题。将每个理论方向扩展为
-$[({}^{B}\boldsymbol u_i^{*})^{\mathrm T},1]$ 后，设计矩阵必须具有满列秩 4；否则轨迹
+问题。它求出的 $\hat{\boldsymbol c}$ 和 $\hat{\boldsymbol M}$ 用于在线阶段把新的接收器
+位置反算为大臂方向。为了把常量中心项和三维方向项写在同一个线性方程中，将每个理论方向
+在末尾附加常数 1，形成增广向量
+$[({}^{B}\boldsymbol u_i^{*})^{\mathrm T},1]$。相应设计矩阵必须具有满列秩 4，即四个列方向
+都具有独立信息；否则轨迹
 中心和全部仿射分量不能被唯一辨识。DOWN、FORWARD 和 SIDEWAYS 三类方向不足以满足这一
 条件，因此标定流程额外引入 FORWARD\_30 和 FORWARD\_60，以增加前举路径上的方向变化
 并改善模型条件。
@@ -437,7 +549,8 @@ $[({}^{B}\boldsymbol u_i^{*})^{\mathrm T},1]$ 后，设计矩阵必须具有满�
 $\lVert\tilde{\boldsymbol u}\rVert_2=1$；实际数据受噪声影响通常偏离曲面，因此仍需归一化。
 这一过程可以理解为先用逆仿射变换消除安装相关的方向性畸变，再将结果投影回单位方向空间。
 
-矩阵 $\hat{\boldsymbol M}$ 的最小奇异值过小时，逆映射会放大位置噪声。为此定义条件数
+矩阵 $\hat{\boldsymbol M}$ 的奇异值表示沿三个主方向的位移尺度。最小奇异值过小时，说明
+某一方向几乎没有被参考姿势激励，求逆时该方向的微小位置噪声会被显著放大。为此定义条件数
 \begin{equation}
   \kappa(\hat{\boldsymbol M})=
   \frac{\sigma_{\max}(\hat{\boldsymbol M})}
@@ -476,8 +589,12 @@ $\lVert\tilde{\boldsymbol u}\rVert_2=1$；实际数据受噪声影响通常偏�
   \label{eq:ch4_forearm_direction_prediction}
 \end{equation}
 
-方向轴和对齐矩阵通过交替优化求解：固定 $\boldsymbol a_d$ 时，$\boldsymbol A_d$ 可归结为
-Wahba 旋转对齐问题；固定 $\boldsymbol A_d$ 时，可将理论方向反变换到各接收器局部坐标系
+式~\eqref{eq:ch4_forearm_direction_prediction} 表示两步坐标变换：先用
+${}^{T}\boldsymbol R_{F,i}$ 把接收器内部的候选方向 $\boldsymbol a_d$ 旋转到发射器坐标系，
+再用 $\boldsymbol A_d$ 将其统一表达在人体坐标系。方向轴和对齐矩阵通过交替优化求解：固定
+$\boldsymbol a_d$ 时，$\boldsymbol A_d$ 可归结为
+Wahba 旋转对齐问题，即寻找一个旋转，使多组测量方向与对应理论方向的平方误差之和最小
+~\cite{wahba1965least}；固定 $\boldsymbol A_d$ 时，可将理论方向反变换到各接收器局部坐标系
 并取均值，更新 $\boldsymbol a_d$。算法从六个坐标轴正负方向初始化，保留参考姿势方向 RMS
 最小的解。
 
@@ -506,9 +623,11 @@ Wahba 旋转对齐问题；固定 $\boldsymbol A_d$ 时，可将理论方向反�
 \end{equation}
 
 除了方向映射，系统还建立独立的姿态对齐矩阵 $\boldsymbol A_t$ 和固定安装旋转
-$\boldsymbol R_m$，用于计算 wrist roll。在 DOWN 姿势下，理论前臂姿态作为腕部零位；
-三次 DOWN 重复的平均旋转确定本次安装的固定旋转。由此，前臂方向误差不会直接被解释为
-腕部扭转。
+$\boldsymbol R_m$，用于计算 wrist roll。这里的“姿态对齐”是把接收器报告的完整三维旋转
+转换到人体模型坐标系；$\boldsymbol R_m$ 则记录接收器外壳相对理论前臂坐标系的固定安装角。
+在 DOWN 姿势下，理论前臂姿态作为腕部零位；三次 DOWN 重复的平均旋转确定本次安装的固定
+旋转。在线计算时先去除肩、肘造成的理论旋转，再去除 $\boldsymbol R_m$，剩余的绕前臂纵轴
+分量才被解释为腕部扭转。由此，外壳安装角和前臂方向误差不会直接被误认为 wrist roll。
 
 \subsection{肘角的安装级仿射修正}
 \label{subsec:ch4_elbow_affine_correction}
@@ -523,10 +642,12 @@ $\boldsymbol R_m$，用于计算 wrist roll。在 DOWN 姿势下，理论前臂�
   \label{eq:ch4_geometric_elbow_angle}
 \end{equation}
 
-在本研究的零位约定中，弯肘约 $90^\circ$ 时两个方向近似正交，因而 $q_{e,g}\approx0$；
+下标 $g$ 表示 geometric，即由两条肢段方向直接得到的几何角。在本研究的零位约定中，
+弯肘约 $90^\circ$ 时两个方向近似正交，因而 $q_{e,g}\approx0$；
 手臂伸直时二者近似平行，因而 $q_{e,g}\approx90^\circ$。由于两个方向拟合各自存在固定
-残差，几何角可能在弯曲和伸直姿势下表现出不同的系统偏差。仅增加一个固定零偏不能同时
-修正两端，因此本研究使用安装级仿射模型
+残差，几何角可能同时存在零位偏差和幅值缩放误差：固定零偏只能整体平移角度，不能改变从
+弯曲端到伸直端的量程；单独改变增益又不能校正零位。因此本研究对每次安装分别拟合一维
+仿射修正，即“缩放加平移”模型
 \begin{equation}
   q_e=\operatorname{clip}
   (s_e q_{e,g}+b_e,\,0,\,\pi/2),
@@ -546,22 +667,24 @@ $|b_e|\leq20^\circ$。若拟合不可辨识或超出合理范围，系统保留�
   \centering
   \caption{安装级标定质量门槛}
   \label{tab:ch4_quality_gates}
-  \begin{tabularx}{\linewidth}{@{}XlX@{}}
+  \begin{tabularx}{\linewidth}{@{}XllX@{}}
     \toprule
-    检查项 & 当前门槛 & 不通过时的处理 \\
+    检查项 & 建议/诊断阈值 & 硬限制 & 不通过时的处理 \\
     \midrule
-    参考姿势重复差异 & 最大 $15^\circ$ & 重新采集当前姿势 \\
-    大臂方向参考误差 & 最大 $15^\circ$ & 拒绝保存 \\
-    前臂方向参考误差 & 最大 $25^\circ$ & 拒绝保存 \\
-    前臂腕部零位重复误差 & 最大 $15^\circ$ & 拒绝保存 \\
-    仿射矩阵条件数 & 最大 4.0 & 拒绝保存 \\
-    仿射位置模型 RMS/最大误差 & 硬限制 $35/65\,\mathrm{mm}$ & 拒绝保存 \\
-    前臂方向参考误差 & $15^\circ$ 至 $25^\circ$ & 仅允许诊断，禁止真机发布 \\
+    参考姿势重复差异 & --- & $15^\circ$ & 重采当前姿势 \\
+    大臂方向参考误差 & $10^\circ$ & $15^\circ$ & 警告/拒绝保存 \\
+    前臂方向参考误差 & $10^\circ$；真机资格 $20^\circ$ & $25^\circ$ & 警告、仅诊断或拒绝 \\
+    前臂腕部零位重复误差 & --- & $15^\circ$ & 拒绝保存 \\
+    仿射矩阵条件数 & 越接近 1 越好 & 4.0 & 拒绝保存 \\
+    仿射位置模型 RMS/最大误差 & $30/50\,\mathrm{mm}$ & $35/65\,\mathrm{mm}$ & 警告/拒绝保存 \\
     \bottomrule
   \end{tabularx}
 \end{table}
 
-若前臂方向误差超过 $15^\circ$ 但仍未超过硬限制 $25^\circ$，标定可以作为诊断资料保存，
+表中的“建议/诊断阈值”用于提示边缘质量，“硬限制”决定标定文件能否保存，两者不应简单
+理解为“仿真门槛”和“实机门槛”。仿真与 dry-run 仍可使用通过硬限制但质量边缘的标定；
+真机资格另由更严格的前臂方向条件控制。若前臂方向误差超过 $20^\circ$ 但仍未超过硬限制
+$25^\circ$，标定可以作为诊断资料保存，
 但会被标记为 \texttt{dry\_run\_only: true}。该标定只允许用于 dry-run 和离线诊断，
 重定向节点拒绝向真机主题发布关节目标。该设计把“算法能够产生数值”和“标定具备实机
 资格”明确分开。
@@ -575,7 +698,11 @@ $|b_e|\leq20^\circ$。若拟合不可辨识或超出合理范围，系统保留�
 
 安装标定完成后，每一对同步位姿首先被转换为三个中间几何量：大臂单位方向
 ${}^{B}\hat{\boldsymbol u}$、前臂单位方向 ${}^{B}\hat{\boldsymbol f}$，以及经过腕部姿态
-对齐的前臂接收器旋转 ${}^{B}\boldsymbol R_F$。五个关节量并不是同时进行黑箱优化，而是
+对齐的前臂接收器旋转 ${}^{B}\boldsymbol R_F$。其中，大臂方向由
+式~\eqref{eq:ch4_upper_direction_raw}--\eqref{eq:ch4_upper_direction_normalized} 对当前大臂
+接收器位置进行逆仿射映射得到；前臂方向由式~\eqref{eq:ch4_forearm_direction_online} 对当前
+前臂接收器姿态和已标定局部轴进行变换得到；“腕部姿态对齐”则指用 $\boldsymbol A_t$ 将完整
+接收器旋转转换到人体模型坐标系。五个关节量并不是同时进行黑箱优化，而是
 按照几何依赖关系逐级求解：先由大臂方向确定 $q_p,q_r$，再由两条肢段方向确定几何肘角
 $q_{e,g}$ 和肩部轴向角 $q_y$，最后从前臂残余旋转中提取 $q_w$。几何肘角随后经过本次
 安装的增益和偏置修正，形成最终输出 $q_e$。
@@ -615,6 +742,12 @@ $\boldsymbol a_{u,0}=[0,0,-1]^{\mathrm T}$，大臂方向只与 $q_p,q_r$ 有关
   \end{bmatrix}.
   \label{eq:ch4_upper_direction_expanded}
 \end{equation}
+这里的“零位大臂轴”就是式~\eqref{eq:ch4_zero_segment_axes} 定义的
+$\boldsymbol a_{u,0}$。由于该向量位于 $z$ 轴上，绕 $z$ 轴旋转不会改变它，即
+$\boldsymbol R_z(q_y)\boldsymbol a_{u,0}=\boldsymbol a_{u,0}$；随后依次左乘
+$\boldsymbol R_x(q_r)$ 和 $\boldsymbol R_y(q_p)$，直接进行矩阵乘法即可得到
+式~\eqref{eq:ch4_upper_direction_expanded}。
+
 因此，肩部 pitch 和 roll 的主值可写为
 \begin{equation}
   q_p=\operatorname{atan2}(-u_x,-u_z),
@@ -622,6 +755,13 @@ $\boldsymbol a_{u,0}=[0,0,-1]^{\mathrm T}$，大臂方向只与 $q_p,q_r$ 有关
   q_r=\arcsin(\operatorname{clip}(u_y,-1,1)).
   \label{eq:ch4_pitch_roll_inverse}
 \end{equation}
+
+“主值”表示反三角函数在约定区间内返回的代表解，因为同一方向可对应相差 $2\pi$ 的周期
+等价角。由式~\eqref{eq:ch4_upper_direction_expanded} 有
+$u_y=\sin q_r$，故 $q_r$ 可由反正弦得到；而 $-u_x$ 与 $-u_z$ 分别包含
+$\sin q_p\cos q_r$ 和 $\cos q_p\cos q_r$，用双参数反正切可同时保留象限信息并消去共同
+因子 $\cos q_r$。$\operatorname{clip}(u_y,-1,1)$ 只用于消除浮点误差造成的轻微越界，
+例如数值上出现 $1+10^{-12}$ 时避免 $\arcsin$ 失效，并非裁剪正常人体动作。
 
 由于 \texttt{atan2} 的输出位于 $[-\pi,\pi]$，系统将当前结果展开到最接近上一帧的等价角，
 避免跨越 $\pm\pi$ 时产生整周跳变。
@@ -636,6 +776,13 @@ $\boldsymbol a_{u,0}=[0,0,-1]^{\mathrm T}$，大臂方向只与 $q_p,q_r$ 有关
 重新采用测量解。与此同时，roll 使用标准 pitch 坐标系下的 \texttt{atan2} 表达，使其
 能够连续通过 $90^\circ$，而不是被 \texttt{asin} 折回到主值范围。该处理保证从 DOWN
 直接侧举和从 FORWARD 转向侧举时，同一最终人体姿势映射到同一机器人目标。
+
+由式~\eqref{eq:ch4_upper_direction_expanded} 可见，$u_x$ 和 $u_z$ 都含有因子
+$\cos q_r$；当侧举接近 $|q_r|=90^\circ$ 时该因子趋近零，pitch 的分子和分母同时退化。
+阈值 0.50 和 0.65 分别约对应 $|q_r|=60^\circ$ 和 $49^\circ$，是当前工程为避免临界点
+抖动设置的进入/退出滞回阈值，而不是人体生理常数。进入奇异区后固定 $q_p=0$，相当于从
+无穷多个等价 pitch--roll 表示中选择统一标准解；退出阈值更高且要求回到水平面以下，使状态
+不会在噪声作用下频繁切换。
 
 \subsection{肘部伸展量}
 \label{subsec:ch4_online_elbow_angle}
@@ -653,15 +800,31 @@ ${}^{B}\hat{\boldsymbol f}={}^B\boldsymbol R_S
   &=\sin q_{e,g}.
   \label{eq:ch4_elbow_dot_product_derivation}
 \end{align}
+旋转矩阵满足 $\boldsymbol R^{\mathrm T}\boldsymbol R=\boldsymbol I$，因此对任意向量
+$\boldsymbol a,\boldsymbol b$ 都有
+$(\boldsymbol R\boldsymbol a)^{\mathrm T}(\boldsymbol R\boldsymbol b)
+=\boldsymbol a^{\mathrm T}\boldsymbol b$，即共同旋转不改变夹角或内积。在本式中，肩部旋转
+${}^{B}\boldsymbol R_S$ 因而被消去；再代入
+$\boldsymbol a_{u,0}=[0,0,-1]^{\mathrm T}$、
+$\boldsymbol a_{f,0}=[1,0,0]^{\mathrm T}$ 和 $\boldsymbol R_y(q_{e,g})$ 的矩阵形式，内积
+恰好等于 $\sin q_{e,g}$。
+
 因此，式~\eqref{eq:ch4_geometric_elbow_angle} 可以直接由两个肢段方向求得，而不依赖肩部
 三个角的具体数值。在本研究的约定下，$q_{e,g}=0$ 对应约 $90^\circ$ 屈肘，
 $q_{e,g}=\pi/2$ 对应伸直。为避免与临床文献中常用的“屈曲角”混淆，本文将其称为肘部
 伸展量。
 
+这种零位来自当前 G1 左臂模型与重定向接口的关节语义：机器人模型零位附近，大臂向下而
+前臂向前，二者约成直角；正向 $q_e$ 将前臂逐渐转到与大臂同向。因此本文的 $q_e$ 是
+“从约 $90^\circ$ 弯肘零位出发的伸展量”，不等同于临床上通常从完全伸直定义的肘屈曲角。
+
 几何肘角直接反映当前两条估计方向之间的关系。最终发布的肘部变量使用
 式~\eqref{eq:ch4_elbow_affine_correction} 进行安装级增益和零偏修正。这里应区分
 $q_{e,g}$ 与 $q_e$：前者用于保持几何分解与测量方向一致，后者是面向机器人目标的校正后
 输出。
+必须保留两者，是因为 wrist 残余姿态分解要求理论前臂方向与当前实测大臂、前臂方向严格
+一致，故使用未修正的 $q_{e,g}$；而输出给重定向层的肘角需要补偿安装造成的尺度和零偏，故
+使用 $q_e$。若提前用 $q_e$ 构造理论前臂姿态，标定补偿量会被错误地吸收到 wrist twist 中。
 
 \subsection{肩部 yaw}
 \label{subsec:ch4_shoulder_yaw}
@@ -691,13 +854,33 @@ $\boldsymbol f_{0,\perp}$，则
   \label{eq:ch4_shoulder_yaw_inverse}
 \end{equation}
 
-负号来自 G1 肩 yaw 正方向与大臂方向之间的轴向约定。与 pitch 相同，yaw 也展开到最接近
-上一帧的等价角。
+投影的作用是去除前臂沿大臂轴的分量，只保留能够描述肘平面绕大臂轴朝向的分量。归一化
+则去除投影长度，只比较方向；但只有投影长度足够大时，归一化才不会放大噪声。零 yaw 参考
+方向 $\boldsymbol f_{0,\perp}$ 由当前 $q_p,q_r$ 和 $q_y=0$ 的运动学模型生成，因此比较二者
+即可得到实际肘平面相对零 yaw 肘平面的有符号转角。式~\eqref{eq:ch4_shoulder_yaw_inverse}
+中，点积给出余弦项，沿大臂轴的叉积投影给出带符号正弦项，$\operatorname{atan2}$ 将二者
+合成为保留象限的有符号角。前置负号用于匹配 G1 肩 yaw 的正方向约定。
+
+\begin{figure}[htbp]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\centering
+    左图：在垂直于大臂方向 ${}^{B}\hat{\boldsymbol u}$ 的平面内，画出前臂投影
+    $\boldsymbol f_{\perp}$、零 yaw 参考 $\boldsymbol f_{0,\perp}$ 和有符号角 $q_y$；
+    右图：对比弯肘时投影较长、yaw 与 wrist 可分辨，以及直臂时投影趋近零、两种轴向旋转
+    耦合的情形。}}
+  \caption{肩部 yaw 的平面投影求解及直臂不可观测性（待替换为正式绘图）}
+  \label{fig:ch4_yaw_projection_observability}
+\end{figure}
+
+与 pitch 相同，yaw 也展开到最接近上一帧的等价角。由于旋转 $q_y$ 与
+$q_y+2k\pi$（$k\in\mathbb Z$）表示同一姿态，展开只选择最连续的数值分支，并不改变物理
+旋转。
 
 \subsection{前臂旋前/旋后}
 \label{subsec:ch4_forearm_pronation_supination}
 
-当前实现使用与两条测量方向直接一致的几何肘角 $q_{e,g}$ 构造不含 wrist roll 的理论
+当前实现使用与两条测量方向（大臂单位方向 ${}^{B}\hat{\boldsymbol u}$ 和前臂单位方向
+${}^{B}\hat{\boldsymbol f}$）直接一致的几何肘角 $q_{e,g}$ 构造不含 wrist roll 的理论
 前臂旋转
 \begin{equation}
   {}^{B}\boldsymbol R_{E,g}=
@@ -719,6 +902,13 @@ $\boldsymbol f_{0,\perp}$，则
   \label{eq:ch4_wrist_residual_rotation}
 \end{equation}
 
+上述三式按“预测---观测---求残差”的顺序工作。式
+~\eqref{eq:ch4_forearm_rotation_without_wrist} 用已估计的肩、肘量预测前臂在未转掌时的姿态；
+式~\eqref{eq:ch4_forearm_sensor_body_rotation} 将传感器观测变换到同一人体坐标系；式
+~\eqref{eq:ch4_wrist_residual_rotation} 左乘理论姿态的逆、右乘固定安装旋转的逆，从观测中
+去除肩部运动、肘部运动和外壳安装角。理想剩余量只包含前臂绕自身纵轴的旋转。本文沿用
+机器人关节名将该量称为 wrist roll，但其人体意义是前臂旋前/旋后，并非手腕屈伸。
+
 等价地，前臂接收器姿态模型可写为
 \begin{equation}
   {}^{B}\boldsymbol R_F
@@ -738,9 +928,12 @@ $\boldsymbol q_{res}=[q_0,q_x,q_y,q_z]^{\mathrm T}$，只保留向量部分在 $
   \label{eq:ch4_wrist_twist_angle}
 \end{equation}
 然后将结果展开到上一帧附近，以维持时间连续性。这一过程等价于围绕前臂纵轴的
-swing--twist 分解。wrist 提取完成后，系统才将 $q_{e,g}$ 修正为最终输出 $q_e$；因此，
+swing--twist 分解：swing 改变纵轴指向，twist 则绕该纵轴旋转；只保留 $q_x$ 相当于提取
+局部 $+x$ 轴上的 twist 分量。此类分解常用于把三维关节旋转分离为摆动和轴向扭转
+~\cite{murthy2019joint}。结果展开的原因与 yaw 相同：四元数给出的主角位于有限区间，相邻
+帧若跨过 $\pm\pi$ 会在数值上跳变约 $2\pi$，选择离上一帧最近的等价角可保持连续。
+wrist 提取完成后，系统才将 $q_{e,g}$ 修正为最终输出 $q_e$；因此，
 肘角的经验增益和零偏不会被误解释为额外的前臂轴向旋转。
-\textbf{[待补充文献：旋转的 swing--twist 分解]}
 
 \section{不可观测区域与稳健性处理}
 \label{sec:ch4_observability_robustness}
@@ -752,6 +945,16 @@ swing--twist 分解。wrist 提取完成后，系统才将 $q_{e,g}$ 修正为�
 $\lVert\boldsymbol f_{\perp}\rVert\rightarrow0$。此时，仅凭两个肢段方向无法区分“肩部
 绕大臂轴旋转”和“前臂自身旋转”；同一物理姿态可以对应多组 $(q_y,q_w)$。这是测量模型
 的几何不可观测性，而不是数值求解精度不足。
+
+原因是直臂时肩 yaw 轴与前臂 twist 轴近似重合，末端姿态主要取决于二者的组合量。对任意
+小角度 $\delta$，参数对
+\begin{equation}
+  (q_y,q_w)\sim(q_y+\delta,q_w-\delta)
+  \label{eq:ch4_yaw_wrist_equivalent_pairs}
+\end{equation}
+可产生相同或近似相同的总轴向旋转，因而无法由当前两接收器数据唯一判断该旋转应归属于
+肩部还是前臂。弯肘后两条旋转轴不再共线，图
+~\ref{fig:ch4_yaw_projection_observability} 所示投影重新出现，两个变量才恢复可分辨性。
 
 系统定义
 \begin{equation}
@@ -774,15 +977,18 @@ $q_{e,g}\rightarrow\pi/2$、$o_y\rightarrow0$，肩 yaw 轴与前臂 twist 轴�
 噪声放大为几十度的轴向旋转。由于本模型中 $o_y$ 随肘部伸直而下降，该阈值会在完全伸直
 之前提前冻结轴向角。系统恢复到明显弯肘姿态后，再继续更新 yaw 和 wrist。
 
-论文实验中应主动报告这一限制。直臂前举和直臂侧举可以用于评价大臂方向及肘角，但不应
+因此，直臂前举和直臂侧举可以用于评价大臂方向及肘角，但不适合
 把直臂主动转掌作为 wrist 精度的主要证据。wrist 单关节实验应保持肘部弯曲约 $60^\circ$
 至 $90^\circ$，使肩部轴向旋转和前臂旋转保持可分辨。
 
-\subsection{估计角度的时间连续性}
+\subsection{周期角展开与时间连续性}
 \label{subsec:ch4_temporal_conditioning}
 
-肩部 yaw、wrist roll 和其他周期角首先展开到最接近上一帧的 $2\pi$ 等价分支，避免
-$-\pi/\pi$ 边界产生整周跳变。侧举奇异区和直臂不可观测区的内部状态也只在满足带滞回的
+肩部 yaw、wrist roll 和其他周期角首先展开到最接近上一帧的 $2\pi$ 等价分支。反三角函数
+通常只返回 $[-\pi,\pi)$ 内的主值，因此真实角度从 $+\pi$ 连续增加时，下一帧数值会变成
+接近 $-\pi$；两帧物理上很接近，数值却相差近 $2\pi$。角展开在
+$\theta+2k\pi$ 的等价集合中选择最接近上一帧的分支，从而避免该边界产生整周跳变。侧举
+奇异区和直臂不可观测区的内部状态也只在满足带滞回的
 重新观测条件后更新，防止临界点附近反复切换。
 
 本章输出的是经过可观测性处理的五自由度人体估计，不在此处施加 G1 关节限位、机器人
@@ -801,7 +1007,8 @@ $-\pi/\pi$ 边界产生整周跳变。侧举奇异区和直臂不可观测区的
   \item 标定矩阵无效或当前方向向量接近零。
 \end{itemize}
 
-若连续 $0.25\,\mathrm{s}$ 没有新的有效同步数据对，重定向节点发出看门狗警告并停止更新
+“看门狗”是监测数据或程序是否在规定时间内持续更新的超时机制。若连续
+$0.25\,\mathrm{s}$ 没有新的有效同步数据对，重定向节点发出看门狗警告并停止更新
 目标。真机桥还具有独立的 UDP 目标超时和控制权释放机制。因此，采集层、重定向层与执行
 层分别检查数据新鲜度，避免单点故障持续驱动机器人。
 
@@ -838,8 +1045,11 @@ $\hat{\boldsymbol q}_h=[q_p,q_r,q_y,q_e,q_w]^{\mathrm T}$。
 
 实现中，双接收器采集、标定和在线估计分别由 \texttt{dual\_em\_tracker\_node}、
 \texttt{dual\_calibration\_node} 和 \texttt{dual\_retargeting\_node} 完成。纯几何运算被
-独立放置在无 ROS 依赖的运动学模块中，便于通过单元测试验证坐标变换、奇异区分支和角度
-连续性。每轮运行结束时，系统将全频率诊断数据保存为 NPZ，其中包括接收器原始位姿、人体
+独立放置在 \texttt{retargeting\_kinematics.py} 和
+\texttt{dual\_retargeting\_kinematics.py} 两个无 ROS 依赖的运动学模块中，便于通过单元
+测试验证坐标变换、奇异区分支和角度连续性。每轮运行结束时，系统将全频率诊断数据保存为
+NPZ（NumPy compressed archive，NumPy 压缩数组归档）文件。该格式可在一个压缩文件中按
+名称保存多个同长度数组，便于保持时间序列字段之间的一一对应。记录内容包括接收器原始位姿、人体
 肢段方向、五个原始关节角、肘角修正前后数值、pitch/yaw 可观测度以及最终命令。这些数据
 为第6章实验设计和第7章结果分析提供统一的数据来源。
 
@@ -865,15 +1075,4 @@ pitch、roll、yaw 和几何肘角，通过残余旋转的 swing--twist 分解�
 
 下一章将在本章输出的五自由度人体动作基础上，介绍 G1 关节目标生成、关节和速度限制、
 躯干碰撞保护以及真机 Arm SDK 安全桥。
-
-% ---------------------------------------------------------------------------
-% 合并到正式论文前的待办项（仅供作者，不进入最终正文）
-% 1. 补充电磁跟踪标定、Wahba 问题、人体动作重定向和 swing--twist 分解的正式文献引用。
-% 2. 绘制传感器安装与坐标系图，确认图中轴方向与代码一致。
-% 3. 将图 \ref{fig:ch4_calibration_flow} 的占位框替换为正式流程图，并补充可观测度示意图。
-% 4. 将工程参数表与最终实验冻结参数核对，避免正式采集后继续改变门槛。
-% 5. 按学校论文模板调整公式、图表和算法的编号格式。
-% 6. 将当前标定数值和误差结果放在第7章，本章只保留方法与预设质量标准。
-% 7. 用未参与拟合的动作或独立真值系统比较姿态法、球面位置法和仿射位置法，避免仅报告
-%    标定参考姿势上的训练残差。
 

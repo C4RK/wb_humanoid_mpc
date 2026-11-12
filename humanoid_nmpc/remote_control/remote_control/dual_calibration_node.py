@@ -54,6 +54,7 @@ REFERENCE_REPEAT_LIMIT_DEG = 15.0
 FORWARD_ARC_ANGLE_TOLERANCE_DEG = 12.0
 UPPER_REFERENCE_HARD_LIMIT_DEG = 15.0
 FOREARM_REFERENCE_HARD_LIMIT_DEG = 25.0
+FOREARM_REFERENCE_PUBLISH_LIMIT_DEG = 20.0
 TWIST_REFERENCE_HARD_LIMIT_DEG = 15.0
 HARD_PIVOT_RMS_LIMIT_M = 0.04
 MIN_UPPER_ARM_LENGTH_M = 0.15
@@ -726,22 +727,28 @@ class DualCalibrationNode(Node):
             print('with the same palm and thumb direction.')
             return
         reference_quality_warning = max_reference_error > 10.0
-        dry_run_only = forearm_reference_max > 15.0
+        dry_run_only = (
+            forearm_reference_max > FOREARM_REFERENCE_PUBLISH_LIMIT_DEG)
         if reference_quality_warning:
             print('[WARNING] Reference-pose error exceeds 10 degrees.')
-            if forearm_reference_max > 15.0:
+            if (forearm_reference_max >
+                    FOREARM_REFERENCE_PUBLISH_LIMIT_DEG):
                 print('[WARNING] The multi-pose forearm direction fit still differs')
                 print('from the idealized reference directions. This calibration will be')
-                print('saved as dry-run-only and cannot publish commands to hardware.')
+                print('saved as dry-run-only because it exceeds the '
+                      f'{FOREARM_REFERENCE_PUBLISH_LIMIT_DEG:.0f}-degree '
+                      'hardware publication limit.')
         if position_quality_warning or reference_quality_warning:
             if input('Save calibration with these warnings? [y/N]: ').strip().lower() != 'y':
                 print('[Dual calibration] Cancelled. Repeat the reference poses.')
                 return
 
         calibration = {
-            'version': 13,
+            'version': 14,
             'mode': 'dual_receiver_hybrid',
             'dry_run_only': dry_run_only,
+            'forearm_reference_publish_limit_deg': (
+                FOREARM_REFERENCE_PUBLISH_LIMIT_DEG),
             'calibrated_at': datetime.now(timezone.utc).isoformat(),
             'reference_pose_labels': list(reference_labels),
             'rotation_convention': rotation_convention,

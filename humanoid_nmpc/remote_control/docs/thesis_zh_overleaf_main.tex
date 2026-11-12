@@ -1,4 +1,4 @@
-% 中文论文方法章节的 Overleaf 独立预览入口。
+% 中文论文第2--7章及参考文献的 Overleaf 独立预览入口。
 % Overleaf: Menu -> Settings -> Compiler -> XeLaTeX
 \documentclass[UTF8,12pt,openany]{ctexbook}
 
@@ -20,10 +20,15 @@
 \tableofcontents
 
 \mainmatter
+\input{thesis_chapter2_draft_zh.tex}
 \input{thesis_chapter3_draft_zh.tex}
 \input{thesis_chapter4_draft_zh.tex}
 \input{thesis_chapter5_draft_zh.tex}
 \input{thesis_chapter6_draft_zh.tex}
 \input{thesis_chapter7_draft_zh.tex}
+
+\backmatter
+\bibliographystyle{unsrt}
+\bibliography{thesis_references}
 
 \end{document}

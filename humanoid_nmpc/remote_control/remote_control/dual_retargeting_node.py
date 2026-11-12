@@ -73,6 +73,8 @@ class DualRetargetingNode(Node):
         self.calibration_mode = calibration['mode']
         self.calibration_dry_run_only = bool(
             calibration.get('dry_run_only', False))
+        self.forearm_reference_publish_limit_deg = float(
+            calibration.get('forearm_reference_publish_limit_deg', 15.0))
         self.forearm_mount = self._matrix(
             calibration, 'forearm_sensor_mount_rotation')
         self.use_hybrid = self.calibration_mode == 'dual_receiver_hybrid'
@@ -220,7 +222,9 @@ class DualRetargetingNode(Node):
                 not self.simulation_only):
             raise ValueError(
                 'This calibration is marked dry-run-only because its forearm '
-                'reference error exceeded 15 degrees. Recalibrate before '
+                'reference error exceeded the recorded '
+                f'{self.forearm_reference_publish_limit_deg:.0f}-degree '
+                'hardware publication limit. Recalibrate before '
                 'publishing robot joint targets, or set simulation_only:=true '
                 'to publish solely on /arm_joint_target_sim for MuJoCo.')
 
