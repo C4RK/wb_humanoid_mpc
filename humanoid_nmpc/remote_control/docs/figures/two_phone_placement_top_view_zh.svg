@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="920" viewBox="0 0 1400 920">
+  <defs>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 Z" fill="#159447"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#64748b"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill:#172033; }
+      .subtitle { font: 700 25px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill:#172033; }
+      .label { font: 600 22px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill:#172033; }
+      .small { font: 500 18px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill:#334155; }
+      .tiny { font: 500 16px "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; fill:#475569; }
+      .dim { stroke:#64748b; stroke-width:2.5; fill:none; marker-end:url(#arrow-gray); }
+      .sight { stroke:#2563eb; stroke-width:3; stroke-dasharray:11 8; fill:none; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="920" fill="#f8fafc"/>
+  <text x="700" y="52" text-anchor="middle" class="title">双手机人体姿态真值实验：推荐摆放位置</text>
+
+  <!-- Main top view panel -->
+  <rect x="38" y="82" width="920" height="790" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="3"/>
+  <text x="70" y="125" class="subtitle">俯视图</text>
+
+  <!-- floor forward reference -->
+  <line x1="610" y1="520" x2="610" y2="185" stroke="#159447" stroke-width="5" marker-end="url(#arrow-green)"/>
+  <text x="630" y="215" class="label" fill="#159447">人体固定正前方</text>
+  <text x="630" y="244" class="small">胸口、骨盆和脚尖始终朝这里</text>
+
+  <!-- Human body, top view -->
+  <circle cx="610" cy="510" r="37" fill="#f2c59d" stroke="#8a5b39" stroke-width="3"/>
+  <rect x="558" y="548" width="104" height="155" rx="46" fill="#94a3b8" stroke="#475569" stroke-width="3"/>
+  <ellipse cx="610" cy="733" rx="96" ry="42" fill="#cbd5e1" stroke="#64748b" stroke-width="3"/>
+  <text x="610" y="625" text-anchor="middle" class="label" fill="#ffffff">受试者</text>
+
+  <!-- Anatomical left arm side raise -->
+  <circle cx="555" cy="585" r="14" fill="#f2c59d" stroke="#8a5b39" stroke-width="3"/>
+  <line x1="555" y1="585" x2="385" y2="585" stroke="#f2c59d" stroke-width="38" stroke-linecap="round"/>
+  <line x1="385" y1="585" x2="215" y2="585" stroke="#f2c59d" stroke-width="32" stroke-linecap="round"/>
+  <circle cx="385" cy="585" r="18" fill="#f2c59d"/>
+  <line x1="530" y1="535" x2="225" y2="535" stroke="#2563eb" stroke-width="5" marker-end="url(#arrow-blue)"/>
+  <text x="355" y="505" text-anchor="middle" class="label" fill="#2563eb">人体左侧／左臂侧举方向</text>
+  <text x="355" y="632" text-anchor="middle" class="small">侧举时身体不随手臂转动</text>
+
+  <!-- Marker icons on arm -->
+  <rect x="454" y="564" width="42" height="42" fill="#111827" stroke="#ffffff" stroke-width="5"/>
+  <rect x="282" y="564" width="42" height="42" fill="#111827" stroke="#ffffff" stroke-width="5"/>
+  <text x="475" y="656" text-anchor="middle" class="tiny">ID 10</text>
+  <text x="303" y="656" text-anchor="middle" class="tiny">ID 20</text>
+
+  <!-- Phone A -->
+  <g transform="translate(365,170) rotate(-35)">
+    <rect x="-37" y="-68" width="74" height="136" rx="12" fill="#1e293b" stroke="#0f172a" stroke-width="4"/>
+    <circle cx="0" cy="-48" r="10" fill="#60a5fa"/>
+    <rect x="-27" y="-28" width="54" height="72" rx="5" fill="#dbeafe"/>
+  </g>
+  <text x="286" y="107" class="label" fill="#2563eb">手机 A</text>
+  <text x="198" y="139" class="small">左前方约 30–45°</text>
+  <line x1="370" y1="190" x2="584" y2="500" class="sight"/>
+
+  <!-- Phone B -->
+  <g transform="translate(115,690) rotate(-102)">
+    <rect x="-37" y="-68" width="74" height="136" rx="12" fill="#1e293b" stroke="#0f172a" stroke-width="4"/>
+    <circle cx="0" cy="-48" r="10" fill="#60a5fa"/>
+    <rect x="-27" y="-28" width="54" height="72" rx="5" fill="#dbeafe"/>
+  </g>
+  <text x="68" y="795" class="label" fill="#2563eb">手机 B</text>
+  <text x="68" y="827" class="small">左侧但前后错开约 10–20°</text>
+  <line x1="145" y1="666" x2="579" y2="528" class="sight"/>
+
+  <!-- Bad phone placement directly on arm extension -->
+  <g opacity="0.78">
+    <rect x="56" y="532" width="52" height="96" rx="9" fill="#fee2e2" stroke="#dc2626" stroke-width="4"/>
+    <line x1="48" y1="523" x2="116" y2="637" stroke="#dc2626" stroke-width="7"/>
+    <line x1="116" y1="523" x2="48" y2="637" stroke="#dc2626" stroke-width="7"/>
+    <text x="75" y="488" class="small" fill="#b91c1c">不要放在侧举手臂</text>
+    <text x="75" y="513" class="small" fill="#b91c1c">的正延长线上</text>
+  </g>
+
+  <!-- Angular and distance notes -->
+  <path d="M610,420 A115,115 0 0 0 535,333" fill="none" stroke="#64748b" stroke-width="3"/>
+  <text x="520" y="385" class="small">A：30–45°</text>
+  <path d="M610,397 A140,140 0 0 0 477,520" fill="none" stroke="#64748b" stroke-width="3"/>
+  <text x="438" y="434" class="small">A/B夹角约60–80°</text>
+  <text x="505" y="820" class="label">两台手机到左肩约 1.5–2.5 m</text>
+  <text x="505" y="850" class="small">先确定可见性，再录制双相机外参；外参后不得移动手机</text>
+
+  <!-- Side view inset -->
+  <rect x="990" y="82" width="372" height="790" rx="22" fill="#ffffff" stroke="#cbd5e1" stroke-width="3"/>
+  <text x="1022" y="125" class="subtitle">侧视高度</text>
+  <line x1="1020" y1="790" x2="1332" y2="790" stroke="#64748b" stroke-width="4"/>
+
+  <!-- standing human side -->
+  <circle cx="1220" cy="255" r="34" fill="#f2c59d" stroke="#8a5b39" stroke-width="3"/>
+  <rect x="1184" y="293" width="72" height="235" rx="32" fill="#94a3b8" stroke="#475569" stroke-width="3"/>
+  <line x1="1201" y1="520" x2="1185" y2="784" stroke="#475569" stroke-width="24" stroke-linecap="round"/>
+  <line x1="1238" y1="520" x2="1258" y2="784" stroke="#475569" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="1187" cy="340" r="13" fill="#f2c59d"/>
+  <line x1="1187" y1="340" x2="1170" y2="500" stroke="#f2c59d" stroke-width="28" stroke-linecap="round"/>
+  <circle cx="1170" cy="500" r="15" fill="#f2c59d"/>
+  <line x1="1170" y1="500" x2="1162" y2="650" stroke="#f2c59d" stroke-width="24" stroke-linecap="round"/>
+
+  <!-- phone and height band -->
+  <g transform="translate(1052,420) rotate(90)">
+    <rect x="-32" y="-59" width="64" height="118" rx="10" fill="#1e293b" stroke="#0f172a" stroke-width="4"/>
+    <circle cx="0" cy="-41" r="8" fill="#60a5fa"/>
+  </g>
+  <line x1="1083" y1="420" x2="1187" y2="420" class="sight"/>
+  <rect x="1009" y="335" width="43" height="170" fill="#dcfce7" opacity="0.8" stroke="#159447" stroke-width="2" stroke-dasharray="7 5"/>
+  <text x="1020" y="552" class="small">镜头高度：</text>
+  <text x="1020" y="580" class="small">肩与肘之间</text>
+  <text x="1020" y="625" class="tiny">避免过高俯拍或</text>
+  <text x="1020" y="649" class="tiny">过低仰拍</text>
+
+  <!-- checklist -->
+  <rect x="1018" y="684" width="318" height="78" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text x="1034" y="714" class="tiny">✓ 画面包含肩、肘、腕</text>
+  <text x="1034" y="740" class="tiny">✓ 前举和侧举全程不出画</text>
+</svg>

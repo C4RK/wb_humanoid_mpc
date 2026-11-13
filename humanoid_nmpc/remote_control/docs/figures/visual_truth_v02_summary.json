@@ -1,0 +1,159 @@
+{
+  "method": "10 s temporal blocks; 1/3 fit, 2/3 held-out evaluation; 0.4 s visual occlusion-edge margin",
+  "limitation": "V02 had no separate anatomical-alignment video; this is held-out cross-modal consistency, not independent absolute anatomical accuracy.",
+  "marker_black_square_m": 0.058,
+  "phone_time_map": {
+    "equation": "t_B = scale * t_A + offset_s",
+    "scale": 0.9999,
+    "offset_s": 17.48
+  },
+  "em_time_map": {
+    "equation": "t_A = scale * t_EM + offset_s",
+    "scale": 1.00075,
+    "offset_s": 35.9
+  },
+  "paired_samples_5hz": 1446,
+  "fit_samples_5hz": 463,
+  "held_out_samples_5hz": 983,
+  "marker_axis_upper_local": [
+    0.008381169516486665,
+    -0.9996194428644494,
+    -0.026281656053302127
+  ],
+  "marker_axis_forearm_local": [
+    0.025423287370810357,
+    -0.9572986007153508,
+    0.2879809811909327
+  ],
+  "axis_upper_offset_from_nominal_deg": 1.580743260125509,
+  "axis_forearm_offset_from_nominal_deg": 16.80414195287242,
+  "camera_A_to_body_rotation": [
+    [
+      -0.9991861121407788,
+      0.037380358321140915,
+      0.015159885117587155
+    ],
+    [
+      -0.016413211156189773,
+      -0.033453292345659184,
+      -0.999305500700751
+    ],
+    [
+      -0.036847249619715944,
+      -0.998741000481616,
+      0.03403959683138703
+    ]
+  ],
+  "visual_elbow_fit_on_training_blocks": {
+    "scale": 1.445390749920809,
+    "offset_deg": -18.98664685256965,
+    "limits_deg": [
+      0.0,
+      90.0
+    ]
+  },
+  "phone_geodesic_disagreement_deg": {
+    "id10_upper": {
+      "sample_count": 990,
+      "mean": 10.05121327464112,
+      "rmse": 10.265473013812944,
+      "median": 10.341079440106688,
+      "p95": 11.651644411490349,
+      "max": 56.028899868489596
+    },
+    "id20_forearm": {
+      "sample_count": 1179,
+      "mean": 10.46052500946525,
+      "rmse": 11.155013028761962,
+      "median": 9.598978400503709,
+      "p95": 19.421312183032786,
+      "max": 25.13911937333115
+    }
+  },
+  "phone_nominal_direction_disagreement_deg": {
+    "id10_upper": {
+      "sample_count": 990,
+      "mean": 6.672570852177265,
+      "rmse": 7.081862676372048,
+      "median": 5.817199377156822,
+      "p95": 10.577940689035298,
+      "max": 20.45743907532135
+    },
+    "id20_forearm": {
+      "sample_count": 1179,
+      "mean": 7.403386564280524,
+      "rmse": 9.008036768140416,
+      "median": 6.742584098261204,
+      "p95": 18.596936777463903,
+      "max": 24.31569941175626
+    }
+  },
+  "held_out_error_deg": {
+    "upper_direction": {
+      "sample_count": 983,
+      "mean": 8.770276723289825,
+      "rmse": 9.761525711104959,
+      "median": 7.673393728192072,
+      "p95": 16.769678352407418,
+      "max": 23.656256102178443
+    },
+    "forearm_direction": {
+      "sample_count": 983,
+      "mean": 6.171722357248521,
+      "rmse": 7.1205154537544155,
+      "median": 5.867700479983097,
+      "p95": 11.051826781412593,
+      "max": 29.213022624907865
+    },
+    "elbow_angle": {
+      "sample_count": 983,
+      "mean": 3.056845512124989,
+      "rmse": 4.223186375128897,
+      "median": 2.2548365160990897,
+      "p95": 9.36637021005736,
+      "max": 11.079778110751889
+    }
+  },
+  "fit_error_deg_not_for_reporting": {
+    "upper_direction": {
+      "sample_count": 463,
+      "mean": 9.118027404203154,
+      "rmse": 10.112732576312593,
+      "median": 8.062637302326992,
+      "p95": 17.236487971772004,
+      "max": 19.3274591530968
+    },
+    "forearm_direction": {
+      "sample_count": 463,
+      "mean": 5.521314243440659,
+      "rmse": 6.856931309220498,
+      "median": 4.702974545755042,
+      "p95": 16.762111668181678,
+      "max": 19.802184271545432
+    },
+    "elbow_angle": {
+      "sample_count": 463,
+      "mean": 2.480595495104689,
+      "rmse": 3.9633236329739594,
+      "median": 1.1533106469921108,
+      "p95": 9.57811322261045,
+      "max": 14.998618484576951
+    }
+  },
+  "visual_coverage": {
+    "grid_samples": 1770,
+    "paired_segment_samples": 1588,
+    "paired_fraction": 0.8971751412429378,
+    "quality_samples_after_occlusion_margin": 1521,
+    "id10_no_camera_single_both": [
+      166,
+      615,
+      989
+    ],
+    "id20_no_camera_single_both": [
+      146,
+      445,
+      1179
+    ]
+  }
+}
